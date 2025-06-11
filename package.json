@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "vis-network": "^9.1.11"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.5.1",
+    "vite": "^6.3.5"
+  }
+}

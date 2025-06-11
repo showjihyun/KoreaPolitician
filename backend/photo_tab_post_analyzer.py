@@ -3,6 +3,17 @@ from bs4 import BeautifulSoup
 import json
 import time
 from urllib.parse import urljoin
+from dotenv import load_dotenv
+import os
+import logging
+from neo4j import GraphDatabase
+
+# 환경 변수 로드
+load_dotenv()
+
+# 로깅 설정
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class PhotoTabPostAnalyzer:
     def __init__(self):
@@ -208,6 +219,85 @@ class PhotoTabPostAnalyzer:
         
         print("\n=== 분석 완료 ===")
 
+# 테스트용 데이터 생성
+def create_test_data():
+    return [
+        {
+            "url": "http://test-article-1.com",
+            "title": "테스트 기사 1",
+            "press": "테스트 언론사",
+            "date": "2023-01-01",
+            "politicians": ["이재명", "윤석열"],
+            "sentiment_label": "5 stars",
+            "sentiment_score": 0.9,
+            "base_date": "20230101",
+            "content": "테스트 기사 내용"
+        }
+    ]
+
+# save_to_neo4j 함수 테스트
+def test_save_to_neo4j():
+    articles = create_test_data()
+    
+    # Neo4J 연결 설정
+    uri = os.environ.get('NEO4J_URI', 'bolt://localhost:7687')
+    user = os.environ.get('NEO4J_USER', 'neo4j')
+    password = os.environ.get('NEO4J_PASSWORD', 'patrol-alpine-thomas-nepal-deposit-3273')  # 실제 비밀번호로 변경 필요
+
+    logger.info("[Neo4J 테스트 시작]")
+    try:
+        with GraphDatabase.driver(uri, auth=(user, password)) as driver:
+            driver.verify_connectivity()
+            logger.info("Neo4J 연결 성공")
+
+            # 테스트 데이터 저장
+            with driver.session() as session:
+                for art in articles:
+                    session.execute_write(create_article_and_relationships, art)
+                    logger.info(f"테스트 데이터 저장 완료: {art['title']}")
+
+            # 저장된 데이터 확인 (옵션)
+            with driver.session() as session:
+                result = session.run("MATCH (a:Article {url: $url}) RETURN a", url=articles[0]['url'])
+                if result.single():
+                    logger.info("저장된 데이터 확인 성공")
+                else:
+                    logger.error("저장된 데이터를 찾을 수 없음")
+
+    except Exception as e:
+        logger.error(f"[테스트 실패] {e}")
+    finally:
+        logger.info("[테스트 종료]")
+
+# Neo4J 관계 생성 함수 (기존 코드에서 복사)
+def create_article_and_relationships(tx, article):
+    tx.run("MERGE (a:Article {url: $url}) "
+           "SET a.title = $title, a.press = $press, a.date = $date, "
+           "a.sentiment_label = $sentiment_label, a.sentiment_score = $sentiment_score, "
+           "a.base_date = $base_date",
+           url=article['url'], title=article['title'], press=article['press'],
+           date=article['date'], sentiment_label=article['sentiment_label'],
+           sentiment_score=article['sentiment_score'], base_date=article['base_date'])
+
+    politicians = article.get('politicians', [])
+    if len(politicians) >= 2:
+        for name in politicians:
+            tx.run("MERGE (p:Politician {name: $name})", name=name)
+            tx.run("MATCH (a:Article {url: $url}), (p:Politician {name: $name}) "
+                   "MERGE (a)-[:PUBLISHED_ABOUT]->(p)", url=article['url'], name=name)
+
+        for i in range(len(politicians)):
+            for j in range(i + 1, len(politicians)):
+                name1, name2 = politicians[i], politicians[j]
+                tx.run("MATCH (p1:Politician {name: $name1}), (p2:Politician {name: $name2}) "
+                       "MERGE (p1)-[:MENTIONED_TOGETHER]->(p2)", name1=name1, name2=name2)
+
+                if '5 stars' in article['sentiment_label']:
+                    tx.run("MATCH (p1:Politician {name: $name1}), (p2:Politician {name: $name2}) "
+                           "MERGE (p1)-[:POSITIVE_SENTIMENT]->(p2) "
+                           "SET r.count = 1, r.via_article = $url", name1=name1, name2=name2, url=article['url'])
+
 if __name__ == "__main__":
     analyzer = PhotoTabPostAnalyzer()
-    analyzer.run_analysis() 
+    analyzer.run_analysis()
+    test_save_to_neo4j() 
