@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>국회의원 관계도 GraphDB 구조</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            padding: 30px;
+            background: #f8f9fa;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            text-align: center;
+            transition: transform 0.3s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 12px rgba(0,0,0,0.15);
+        }
+
+        .stat-card .number {
+            font-size: 3em;
+            font-weight: bold;
+            color: #667eea;
+            margin: 10px 0;
+        }
+
+        .stat-card .label {
+            font-size: 1.1em;
+            color: #666;
+        }
+
+        .section {
+            padding: 30px;
+        }
+
+        .section-title {
+            font-size: 2em;
+            color: #667eea;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #667eea;
+        }
+
+        .node-card, .edge-card {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            margin-bottom: 15px;
+            border-radius: 5px;
+        }
+
+        .node-card h3, .edge-card h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .properties {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .property {
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+
+        .property-key {
+            font-weight: bold;
+            color: #764ba2;
+        }
+
+        .property-value {
+            color: #555;
+            margin-left: 10px;
+        }
+
+        .labels {
+            display: inline-flex;
+            gap: 5px;
+            margin-bottom: 10px;
+        }
+
+        .label-badge {
+            background: #667eea;
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+        }
+
+        .edge-visual {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 15px 0;
+            font-size: 1.1em;
+        }
+
+        .edge-node {
+            background: #667eea;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+
+        .edge-arrow {
+            color: #764ba2;
+            font-size: 1.5em;
+        }
+
+        .edge-type {
+            background: #764ba2;
+            color: white;
+            padding: 8px 15px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+
+        .party-section {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 20px;
+        }
+
+        .party-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .party-card h3 {
+            font-size: 1.5em;
+            margin-bottom: 15px;
+        }
+
+        .party-members {
+            background: rgba(255,255,255,0.1);
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+
+        .member-item {
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 50px;
+            font-size: 1.5em;
+            color: #667eea;
+        }
+
+        .error {
+            background: #ff6b6b;
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            padding: 20px 30px 0 30px;
+            background: #f8f9fa;
+        }
+
+        .tab {
+            padding: 15px 30px;
+            background: white;
+            border: none;
+            border-radius: 10px 10px 0 0;
+            cursor: pointer;
+            font-size: 1.1em;
+            transition: all 0.3s;
+        }
+
+        .tab:hover {
+            background: #667eea;
+            color: white;
+        }
+
+        .tab.active {
+            background: #667eea;
+            color: white;
+            font-weight: bold;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏛️ 국회의원 관계도 GraphDB 구조</h1>
+            <p>Node, Edge, Properties 시각화</p>
+        </header>
+
+        <div id="loading" class="loading">
+            데이터를 불러오는 중...
+        </div>
+
+        <div id="error" class="error" style="display: none;"></div>
+
+        <div id="content" style="display: none;">
+            <!-- 통계 -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="label">총 노드 수</div>
+                    <div class="number" id="totalNodes">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">총 엣지 수</div>
+                    <div class="number" id="totalEdges">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">정당 수</div>
+                    <div class="number" id="partyCount">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">의원 수</div>
+                    <div class="number" id="memberCount">0</div>
+                </div>
+            </div>
+
+            <!-- 탭 -->
+            <div class="tabs">
+                <button class="tab active" onclick="showTab('parties')">정당별 분석</button>
+                <button class="tab" onclick="showTab('nodes')">노드 샘플</button>
+                <button class="tab" onclick="showTab('edges')">엣지 샘플</button>
+                <button class="tab" onclick="showTab('relationships')">관계 타입</button>
+            </div>
+
+            <!-- 정당별 분석 -->
+            <div id="parties" class="section tab-content active">
+                <h2 class="section-title">정당별 분석</h2>
+                <div id="partyList" class="party-section"></div>
+            </div>
+
+            <!-- 노드 샘플 -->
+            <div id="nodes" class="section tab-content">
+                <h2 class="section-title">노드 샘플 (상위 10개)</h2>
+                <div id="nodeList"></div>
+            </div>
+
+            <!-- 엣지 샘플 -->
+            <div id="edges" class="section tab-content">
+                <h2 class="section-title">엣지 샘플 (상위 20개)</h2>
+                <div id="edgeList"></div>
+            </div>
+
+            <!-- 관계 타입 -->
+            <div id="relationships" class="section tab-content">
+                <h2 class="section-title">관계 타입별 통계</h2>
+                <div id="relationshipStats"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let graphData = null;
+
+        function showTab(tabName) {
+            // 모든 탭 비활성화
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+
+            // 선택된 탭 활성화
+            event.target.classList.add('active');
+            document.getElementById(tabName).classList.add('active');
+        }
+
+        async function loadData() {
+            try {
+                const response = await fetch('http://localhost:5000/api/stats');
+                const stats = await response.json();
+
+                // 통계 표시
+                document.getElementById('totalNodes').textContent = stats.total_nodes.toLocaleString();
+                document.getElementById('totalEdges').textContent = stats.total_edges.toLocaleString();
+                document.getElementById('partyCount').textContent = stats.nodes_by_label.Party || 0;
+                document.getElementById('memberCount').textContent = stats.nodes_by_label.Member || 0;
+
+                // 관계 타입 통계
+                displayRelationshipStats(stats.edges_by_type);
+
+                // 정당별 데이터 로드
+                await loadParties();
+
+                // 노드 샘플 로드
+                await loadNodeSamples();
+
+                // 엣지 샘플 로드
+                await loadEdgeSamples();
+
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('content').style.display = 'block';
+
+            } catch (error) {
+                console.error('Error loading data:', error);
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent = '데이터를 불러오는 중 오류가 발생했습니다: ' + error.message;
+            }
+        }
+
+        async function loadParties() {
+            // 각 정당별로 의원 검색
+            const parties = ['더불어민주당', '국민의힘', '조국혁신당', '개혁신당', '진보당', '무소속'];
+            const partyList = document.getElementById('partyList');
+            partyList.innerHTML = '';
+
+            for (const party of parties) {
+                try {
+                    const response = await fetch(`http://localhost:5000/api/search/${encodeURIComponent(party)}`);
+                    const data = await response.json();
+                    
+                    const partyCard = document.createElement('div');
+                    partyCard.className = 'party-card';
+                    partyCard.innerHTML = `
+                        <h3>🏛️ ${party}</h3>
+                        <div style="font-size: 2em; margin: 10px 0;">${data.members.length}명</div>
+                        <div class="party-members">
+                            ${data.members.slice(0, 5).map(m => `
+                                <div class="member-item">👤 ${m.name} ${m.region ? '(' + m.region + ')' : ''}</div>
+                            `).join('')}
+                            ${data.members.length > 5 ? `<div class="member-item">... 외 ${data.members.length - 5}명</div>` : ''}
+                        </div>
+                    `;
+                    partyList.appendChild(partyCard);
+                } catch (error) {
+                    console.error(`Error loading party ${party}:`, error);
+                }
+            }
+        }
+
+        async function loadNodeSamples() {
+            try {
+                // 샘플 의원 검색
+                const members = ['이재명', '김기현', '이준석', '조국', '심상정'];
+                const nodeList = document.getElementById('nodeList');
+                nodeList.innerHTML = '';
+
+                for (const name of members) {
+                    const response = await fetch(`http://localhost:5000/api/search/${encodeURIComponent(name)}`);
+                    const data = await response.json();
+                    
+                    if (data.members && data.members.length > 0) {
+                        const member = data.members[0];
+                        const nodeCard = document.createElement('div');
+                        nodeCard.className = 'node-card';
+                        nodeCard.innerHTML = `
+                            <div class="labels">
+                                <span class="label-badge">Member</span>
+                            </div>
+                            <h3>Node: ${member.name}</h3>
+                            <div class="properties">
+                                <div class="property">
+                                    <span class="property-key">ID:</span>
+                                    <span class="property-value">${member.id}</span>
+                                </div>
+                                <div class="property">
+                                    <span class="property-key">정당:</span>
+                                    <span class="property-value">${member.party}</span>
+                                </div>
+                                ${member.region ? `
+                                <div class="property">
+                                    <span class="property-key">지역:</span>
+                                    <span class="property-value">${member.region}</span>
+                                </div>
+                                ` : ''}
+                                ${member.election_count ? `
+                                <div class="property">
+                                    <span class="property-key">당선횟수:</span>
+                                    <span class="property-value">${member.election_count}</span>
+                                </div>
+                                ` : ''}
+                                ${member.image_url ? `
+                                <div class="property">
+                                    <span class="property-key">이미지:</span>
+                                    <span class="property-value">
+                                        <img src="http://localhost:5000${member.image_url}" 
+                                             style="width: 50px; height: 50px; border-radius: 50%; object-fit: cover;"
+                                             onerror="this.style.display='none'">
+                                    </span>
+                                </div>
+                                ` : ''}
+                            </div>
+                        `;
+                        nodeList.appendChild(nodeCard);
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading node samples:', error);
+            }
+        }
+
+        async function loadEdgeSamples() {
+            const edgeList = document.getElementById('edgeList');
+            edgeList.innerHTML = `
+                <div class="edge-card">
+                    <h3>BELONGS_TO (소속 관계)</h3>
+                    <div class="edge-visual">
+                        <div class="edge-node">의원</div>
+                        <div class="edge-arrow">→</div>
+                        <div class="edge-type">BELONGS_TO</div>
+                        <div class="edge-arrow">→</div>
+                        <div class="edge-node">정당</div>
+                    </div>
+                    <p>의원이 특정 정당에 소속되어 있음을 나타내는 관계</p>
+                </div>
+
+                <div class="edge-card">
+                    <h3>SAME_PARTY (같은 정당)</h3>
+                    <div class="edge-visual">
+                        <div class="edge-node">의원 A</div>
+                        <div class="edge-arrow">↔</div>
+                        <div class="edge-type">SAME_PARTY</div>
+                        <div class="edge-arrow">↔</div>
+                        <div class="edge-node">의원 B</div>
+                    </div>
+                    <p>두 의원이 같은 정당에 소속되어 있음을 나타내는 관계</p>
+                </div>
+
+                <div class="edge-card">
+                    <h3>REPRESENTS (대표 지역)</h3>
+                    <div class="edge-visual">
+                        <div class="edge-node">의원</div>
+                        <div class="edge-arrow">→</div>
+                        <div class="edge-type">REPRESENTS</div>
+                        <div class="edge-arrow">→</div>
+                        <div class="edge-node">지역</div>
+                    </div>
+                    <p>의원이 특정 지역을 대표함을 나타내는 관계</p>
+                </div>
+            `;
+        }
+
+        function displayRelationshipStats(edgesByType) {
+            const statsDiv = document.getElementById('relationshipStats');
+            statsDiv.innerHTML = '';
+
+            for (const [type, count] of Object.entries(edgesByType)) {
+                const card = document.createElement('div');
+                card.className = 'stat-card';
+                card.innerHTML = `
+                    <div class="label">${type}</div>
+                    <div class="number">${count.toLocaleString()}</div>
+                `;
+                statsDiv.appendChild(card);
+            }
+        }
+
+        // 페이지 로드 시 데이터 로드
+        window.addEventListener('load', loadData);
+    </script>
+</body>
+</html>
