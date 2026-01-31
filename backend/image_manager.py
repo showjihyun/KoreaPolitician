@@ -19,23 +19,35 @@ logger = logging.getLogger(__name__)
 
 class ImageManager:
     def __init__(self, base_dir: str = ".."):
+        # 1. Try base_dir (default "..")
         self.base_dir = Path(base_dir)
         self.images_dir = self.base_dir / "img"
         
-        # Docker 환경에서는 절대 경로 사용
+        # 2. Try current directory if base_dir doesn't work
         if not self.images_dir.exists():
-            # 상위 디렉토리에서 img 폴더 찾기
+            self.images_dir = Path(".") / "img"
+            
+        # 3. Try backend/../img if still not found
+        if not self.images_dir.exists():
+            self.images_dir = Path("backend").parent / "img"
+
+        # 4. Try absolute /img or Docker app paths
+        if not self.images_dir.exists():
             parent_dir = Path("/app").parent
             if (parent_dir / "img").exists():
                 self.images_dir = parent_dir / "img"
-            # 또는 /img 경로 시도
             elif Path("/img").exists():
                 self.images_dir = Path("/img")
         
-        self.thumbnails_dir = self.base_dir / "data" / "thumbnails"
+        self.thumbnails_dir = Path("data") / "thumbnails"
+        if not self.thumbnails_dir.exists():
+            # Try to create it relative to where we found images if images_dir is known
+            root = self.images_dir.parent if self.images_dir.exists() else Path(".")
+            self.thumbnails_dir = root / "data" / "thumbnails"
+            
         self.thumbnails_dir.mkdir(parents=True, exist_ok=True)
         
-        logger.info(f"ImageManager initialized. Images dir: {self.images_dir}")
+        logger.info(f"ImageManager initialized. Images dir: {self.images_dir.absolute()}")
         logger.info(f"Images dir exists: {self.images_dir.exists()}")
     
     def get_image_path(self, filename: str) -> Path:

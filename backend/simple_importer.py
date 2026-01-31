@@ -176,40 +176,34 @@ class SimpleImporter:
         self.get_statistics()
     
     def create_member_relationships(self, members_data):
-        """의원 간 관계 생성"""
-        members = self.storage.find_nodes("Member")
+        """의원 간 관계 생성 (불필요한 대규모 엣지 생성 억제)"""
+        # 기존의 모든 조합 SAME_PARTY/SAME_REGION 생성은 엣지 폭증의 원인이므로 주석 처리
+        # 대신 국회의원 노드와 정당 노드 간의 BELONGS_TO 관계로 연결성을 유지함
+        print("SAME_PARTY 및 SAME_REGION 엣지 폭증 방지를 위해 개별 생성 스킵")
         
-        # 같은 정당 관계
-        party_members = {}
-        for member in members:
-            party = member["properties"].get("party")
-            if party:
-                if party not in party_members:
-                    party_members[party] = []
-                party_members[party].append(member["id"])
+        # 샘플 감정 관계 생성 (향후 실제 데이터 연동 가능)
+        # 특정 의원들 간의 대표적인 관계 예시
+        sentiment_samples = [
+            ("이재명", "나경원", "NEGATIVE_SENTIMENT", 85, "여야 대치 주역"),
+            ("박지원", "안철수", "NEGATIVE_SENTIMENT", 70, "정치적 입장 차이"),
+            ("이재명", "정청래", "POSITIVE_SENTIMENT", 90, "당내 긴밀한 관계"),
+            ("나경원", "안철수", "POSITIVE_SENTIMENT", 60, "여권 내 중진 협력"),
+            ("권성동", "이재명", "NEGATIVE_SENTIMENT", 95, "강력한 정치적 라이벌"),
+        ]
         
-        for party, member_ids in party_members.items():
-            for i, m1 in enumerate(member_ids):
-                for m2 in member_ids[i+1:]:
-                    self.storage.add_edge(m1, m2, "SAME_PARTY")
-        
-        print("같은 정당 관계 생성 완료")
-        
-        # 같은 시도 관계
-        sido_members = {}
-        for member in members:
-            sido = member["properties"].get("sido")
-            if sido:
-                if sido not in sido_members:
-                    sido_members[sido] = []
-                sido_members[sido].append(member["id"])
-        
-        for sido, member_ids in sido_members.items():
-            for i, m1 in enumerate(member_ids):
-                for m2 in member_ids[i+1:]:
-                    self.storage.add_edge(m1, m2, "SAME_REGION")
-        
-        print("같은 지역 관계 생성 완료")
+        for p1_name, p2_name, rel_type, score, desc in sentiment_samples:
+            # 이름으로 노드 찾기
+            p1_nodes = self.storage.find_nodes("Member", {"name": f"CONTAINS:{p1_name}"})
+            p2_nodes = self.storage.find_nodes("Member", {"name": f"CONTAINS:{p2_name}"})
+            
+            if p1_nodes and p2_nodes:
+                self.storage.add_edge(
+                    p1_nodes[0]["id"], 
+                    p2_nodes[0]["id"], 
+                    rel_type, 
+                    {"score": score, "count": 1, "description": desc}
+                )
+                print(f"샘플 감정 관계 생성: {p1_name} --[{rel_type}]--> {p2_name}")
     
     def analyze_career_relationships(self, members_data):
         """약력 기반 관계 분석"""

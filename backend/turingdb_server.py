@@ -7,10 +7,33 @@ from graph_storage import graph_storage
 from simple_importer import SimpleImporter
 from image_manager import image_manager
 import logging
+from collections import deque
+import datetime
+from pydantic import BaseModel
 
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI()
+
+# Activity Log Queue (In-Memory, Ring Buffer)
+activity_logs = deque(maxlen=50)
+
+def log_activity(action: str, details: str):
+    graph_storage.add_log(action, details)
+    # Still keep in memory for very fast live updates if needed, 
+    # but the API will primarily fetch from DB now.
+    log = {
+        "timestamp": datetime.datetime.now().strftime("%H:%M:%S"),
+        "action": action,
+        "details": details
+    }
+    activity_logs.appendleft(log)
+
+class EdgeRequest(BaseModel):
+    source: str
+    target: str
+    type: str
+    properties: dict = {}
 
 # CORS 설정
 app.add_middleware(
@@ -29,7 +52,18 @@ if os.path.exists("static"):
 @app.on_event("startup")
 async def startup_event():
     """서버 시작 시 데이터 로드"""
+    # DB Init
+    db_config = {
+        'host': os.environ.get('POSTGRES_HOST', 'localhost'),
+        'port': int(os.environ.get('POSTGRES_PORT', 5432)),
+        'user': os.environ.get('POSTGRES_USER', 'postgres'),
+        'password': os.environ.get('POSTGRES_PASSWORD', '1234'),
+        'dbname': os.environ.get('POSTGRES_DB', 'postgres'),
+    }
+    graph_storage.init_db(db_config)
+
     json_file = "assembly_members_complete.json"
+    # Check if nodes exist, if not import from JSON
     if os.path.exists(json_file) and graph_storage.get_statistics()["total_nodes"] == 0:
         logging.info("Loading data on startup...")
         importer = SimpleImporter()
@@ -125,6 +159,28 @@ def search(member_name: str):
     
     return JSONResponse(content={"members": results})
 
+@app.post('/api/edge')
+def add_edge(req: EdgeRequest):
+    """관계 추가"""
+    # Find source and target nodes by name
+    src_nodes = graph_storage.find_nodes("Member", {"name": f"CONTAINS:{req.source}"})
+    tgt_nodes = graph_storage.find_nodes("Member", {"name": f"CONTAINS:{req.target}"})
+
+    if not src_nodes:
+        return JSONResponse(content={"message": f"Source member '{req.source}' not found"}, status_code=404)
+    if not tgt_nodes:
+        return JSONResponse(content={"message": f"Target member '{req.target}' not found"}, status_code=404)
+
+    src_id = src_nodes[0]["id"]
+    tgt_id = tgt_nodes[0]["id"]
+
+    edge = graph_storage.add_edge(src_id, tgt_id, req.type, req.properties)
+    
+    # Log Activity
+    log_activity("New Relation", f"{req.source} -> {req.target} ({req.type})")
+    
+    return JSONResponse(content={"message": "Edge added", "edge": edge})
+
 @app.get('/api/stats')
 def stats():
     """통계 정보"""
@@ -136,11 +192,99 @@ def serve_image(filename: str, thumbnail: bool = False):
     """이미지 서빙"""
     return image_manager.serve_image(filename, thumbnail=thumbnail)
 
+@app.get('/api/dcp/context')
+def dcp_context(subject: str, target: str):
+    """
+    DCP 알고리즘을 위한 문맥(동료 및 그들의 타겟에 대한 태도) 조회
+    """
+    # 1. Find Subject node
+    sub_nodes = graph_storage.find_nodes("Member", {"name": f"CONTAINS:{subject}"})
+    if not sub_nodes:
+        return JSONResponse(content={"allies_context": []})
+    
+    sub_id = sub_nodes[0]["id"]
+    
+    # 2. Find Allies (Simplification: Same Party or POSITIVE edges)
+    # For now, let's use Belong_To Party.
+    # Find Party of Subject
+    # This requires traversing: Member -(BELONGS_TO)-> Party
+    # And then Party <-(BELONGS_TO)- Other Member
+    
+    # Actually, let's just use direct POSITIVE_SENTIMENT neighbors as 'Allies' for strictness?
+    # Or Party. Paper says "Ally".
+    # Implementation: Let's find nodes connected via POSITIVE_SENTIMENT (outgoing from subject)
+    # AND nodes in same party.
+    
+    allies = set()
+    
+    # Strategy A: Outgoing Positive Sentiment
+    rels_out = graph_storage.get_relationships(sub_id, direction="out")
+    for r in rels_out:
+        if r["edge"]["type"] == "POSITIVE_SENTIMENT":
+             if r["node"]: allies.add(r["node"]["id"])
+
+    # Strategy B: Incoming Positive Sentiment (Friends support me?) -> Maybe.
+    # Let's stick to A for now.
+    
+    # 3. For each Ally, check relation to Target
+    tgt_nodes = graph_storage.find_nodes("Member", {"name": f"CONTAINS:{target}"})
+    if not tgt_nodes:
+        return JSONResponse(content={"allies_context": []})
+    tgt_id = tgt_nodes[0]["id"]
+    
+    context_data = []
+    
+    for ally_id in allies:
+        # Check Ally -> Target
+        # We need to find edge from ally_id to tgt_id
+        # graph_storage doesn't have direct (u, v) lookup easily exposed?
+        # We get relationships of ally
+        ally_rels = graph_storage.get_relationships(ally_id, direction="out")
+        for ar in ally_rels:
+            if ar["node"]["id"] == tgt_id:
+                # Found relation Ally -> Target
+                edge = ar["edge"]
+                if edge["type"] in ["POSITIVE_SENTIMENT", "NEGATIVE_SENTIMENT"]:
+                    weight = edge["properties"].get("score", 0.5)
+                    # Use 'count' to boost weight?
+                    count = edge["properties"].get("count", 1)
+                    # Heuristic: weight * log(count)?
+                    effective_weight = weight * (1 + (0.1 * count)) 
+                    
+                    context_data.append({
+                        "ally": ar["node"]["properties"].get("name"),
+                        "relation": edge["type"],
+                        "weight": effective_weight
+                    })
+                    
+    return JSONResponse(content={"allies_context": context_data})
+
+@app.get('/api/activity_logs')
+def get_activity_logs(limit: int = 50, history: bool = False, search: str = None):
+    """활동 로그 조회 (기본값: 최근 50개)"""
+    if history:
+        # DB에서 히스토리 조회
+        logs = graph_storage.get_logs(limit=limit if limit <= 200 else 200, search=search)
+        return JSONResponse(content={"logs": logs})
+    
+    # In-memory 필터링 (간단 검색)
+    res_logs = list(activity_logs)
+    if search:
+        res_logs = [log for log in res_logs if search in log["details"] or search in log["action"]]
+        
+    return JSONResponse(content={"logs": res_logs[:limit]})
+
 @app.get('/api/images')
 def list_images():
     """이미지 목록"""
     images = image_manager.get_all_images()
     return JSONResponse(content={"images": images})
+
+@app.get('/api/intelligence')
+def get_intelligence():
+    """상업용 인사이트 조회를 위한 지능형 분석 데이터 제공"""
+    data = graph_storage.get_intelligence()
+    return JSONResponse(content=data)
 
 @app.get('/health')
 def health():
