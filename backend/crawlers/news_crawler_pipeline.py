@@ -9,8 +9,8 @@ import psycopg2
 import logging
 import traceback
 import json
-from affective_analysis import AffectiveAnalyzer
-from dcp_algorithm import DCPCalculator
+from crawlers.affective_analysis import AffectiveAnalyzer
+from core.dcp_algorithm import DCPCalculator
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -22,7 +22,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='[%(asctime)s] %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('news_crawler_pipeline.log', encoding='utf-8'),
+        logging.FileHandler('data/news_crawler_pipeline.log', encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # assembly_members_complete.json에서 국회의원 이름 전체를 읽어 POLITICIANS 리스트 생성
 POLITICIANS = []
 try:
-    with open(os.path.join(os.path.dirname(__file__), '../assembly_members_complete.json'), 'r', encoding='utf-8') as f:
+    with open(os.path.join(os.path.dirname(__file__), '../../data/assembly_members_complete.json'), 'r', encoding='utf-8') as f:
         members = json.load(f)
         POLITICIANS = [m['name'] for m in members if m.get('name')]
     logger.info(f"총 {len(POLITICIANS)}명의 국회의원 이름을 POLITICIANS에 로드했습니다.")
@@ -158,15 +158,36 @@ def crawl_custom_news_list(date_str, sid1="100", max_pages=1):
     return articles
 
 def crawl_past_30_days(max_articles_per_day=5):
+    """과거 60일간 뉴스 수집 (병렬 처리)"""
     all_articles = []
     today = datetime.now()
-    for i in range(30):
-        target_date = today - timedelta(days=i)
-        date_str = target_date.strftime("%Y%mm%d")
-        daily_news = crawl_custom_news_list(date_str, sid1="100", max_pages=1)
-        if len(daily_news) > max_articles_per_day:
-            daily_news = daily_news[:max_articles_per_day]
-        all_articles.extend(daily_news)
+    
+    def crawl_single_day(day_offset):
+        """단일 날짜의 뉴스 수집"""
+        target_date = today - timedelta(days=day_offset)
+        date_str = target_date.strftime("%Y%m%d")
+        try:
+            daily_news = crawl_custom_news_list(date_str, sid1="100", max_pages=1)
+            if len(daily_news) > max_articles_per_day:
+                daily_news = daily_news[:max_articles_per_day]
+            logger.info(f"Day {day_offset} ({date_str}): {len(daily_news)} articles collected")
+            return daily_news
+        except Exception as e:
+            logger.error(f"Failed to crawl day {day_offset} ({date_str}): {e}")
+            return []
+    
+    # 병렬 처리로 60일간 데이터 수집
+    logger.info("Starting parallel crawling for past 60 days...")
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(crawl_single_day, i) for i in range(60)]  # 60일
+        for future in as_completed(futures):
+            try:
+                daily_articles = future.result()
+                all_articles.extend(daily_articles)
+            except Exception as e:
+                logger.error(f"Error processing future: {e}")
+    
+    logger.info(f"Total articles collected from 60 days: {len(all_articles)}")
     return all_articles
 
 def get_target_politicians(db_config, limit=50):

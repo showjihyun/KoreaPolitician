@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 import os
-from neo4j_importer import Neo4jImporter
+from scripts.neo4j_importer import Neo4jImporter
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -47,7 +47,7 @@ def graph_all(limit: int = 200):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        "fastapi_server:app",
+        "api.fastapi_server:app",
         host="0.0.0.0",
         port=5000,
         reload=True

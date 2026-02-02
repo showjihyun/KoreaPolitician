@@ -1,6 +1,6 @@
 import os
 import logging
-from graph_storage import GraphStorage
+from core.graph_storage import GraphStorage
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)

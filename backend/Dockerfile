@@ -24,4 +24,4 @@ ENV TURINGDB_GRAPH=korea_politician
 EXPOSE 5000
 
 # FastAPI 서버 실행
-CMD ["uvicorn", "turingdb_server:app", "--host", "0.0.0.0", "--port", "5000"]
+CMD ["uvicorn", "api.turingdb_server:app", "--host", "0.0.0.0", "--port", "5000"]

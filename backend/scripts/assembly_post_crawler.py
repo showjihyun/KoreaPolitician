@@ -22,8 +22,9 @@ class AssemblyPostCrawler:
         self.session.headers.update(self.headers)
         
         # 이미지 저장 폴더 생성
-        if not os.path.exists("img"):
-            os.makedirs("img")
+        self.img_dir = os.path.join(os.path.dirname(__file__), "../../img")
+        if not os.path.exists(self.img_dir):
+            os.makedirs(self.img_dir)
     
     def get_initial_page(self):
         """초기 페이지에서 필요한 폼 데이터 추출"""
@@ -176,11 +177,13 @@ class AssemblyPostCrawler:
             return
         
         # JSON 저장
-        with open("assembly_members_post.json", "w", encoding="utf-8") as f:
+        json_path = os.path.join(os.path.dirname(__file__), "../../data/assembly_members_post.json")
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(members, f, ensure_ascii=False, indent=2)
         
         # CSV 저장
-        with open("assembly_members_post.csv", "w", newline="", encoding="utf-8") as f:
+        csv_path = os.path.join(os.path.dirname(__file__), "../../data/assembly_members_post.csv")
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
             if members:
                 fieldnames = members[0].keys()
                 writer = csv.DictWriter(f, fieldnames=fieldnames)

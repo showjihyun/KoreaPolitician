@@ -10,3 +10,4 @@ uvicorn
 pandas
 playwright
 Pillow 
+psycopg2-binary

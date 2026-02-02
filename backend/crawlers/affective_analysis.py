@@ -61,46 +61,55 @@ class AffectiveAnalyzer:
     def analyze_relationship(self, text, entity_a, entity_b):
         """
         Analyzes the relationship between entity_a and entity_b based on the text.
-        Returns a tuple: (relationship_type, score, evidence_sentence)
-        relationship_type: 'POSITIVE_SENTIMENT', 'NEGATIVE_SENTIMENT', or None
+        Uses a sliding window of 3 sentences to resolve zero-anaphora and context.
         """
-        # 1. Preprocessing: Split into sentences (simple split for now)
-        sentences = text.split('.') 
-        target_sentences = []
-        for sent in sentences:
-            if entity_a in sent and entity_b in sent:
-                target_sentences.append(sent.strip())
+        # 1. Preprocessing: Split into sentences
+        sentences = [s.strip() for s in text.split('.') if s.strip()]
         
-        if not target_sentences:
+        # 2. Identify target indices where at least one entity is mentioned
+        target_indices = []
+        for i, sent in enumerate(sentences):
+            if entity_a in sent or entity_b in sent:
+                target_indices.append(i)
+        
+        if not target_indices:
             return None, 0.0, ""
 
-        # 2. Zero-Shot Classification per sentence
         best_score = 0.0
         best_label = None
         best_evidence = ""
 
-        for sent in target_sentences:
-            # Hypotheses
-            # H1: Positive/Friendly
-            h_positive = f"{entity_a}와 {entity_b}는 서로 우호적인 관계이다."
-            # H2: Negative/Hostile
-            h_negative = f"{entity_a}와 {entity_b}는 서로 적대적인 관계이다."
+        # 3. Process each target index with a context window
+        # We look for relationships specifically where BOTH are contextually present
+        # but one might be referred to by a pronoun or omitted in the current sentence.
+        for idx in target_indices:
+            # Context window: Previous, current, next
+            start = max(0, idx - 1)
+            end = min(len(sentences), idx + 2)
+            context_window = ". ".join(sentences[start:end]) + "."
             
-            score_pos = self.predict_nli(sent, h_positive)
-            score_neg = self.predict_nli(sent, h_negative)
+            # Check if both are present in the *window*
+            if entity_a not in context_window or entity_b not in context_window:
+                continue
+
+            # Hypotheses (using the full window as premise)
+            h_positive = f"이 문맥에서 {entity_a}와 {entity_b}는 서로 우호적이거나 협력적인 관계이다."
+            h_negative = f"이 문맥에서 {entity_a}와 {entity_b}는 서로 적대적이거나 비판적인 관계이다."
             
-            # Thresholding
-            threshold = 0.7 # Minimum confidence
+            score_pos = self.predict_nli(context_window, h_positive)
+            score_neg = self.predict_nli(context_window, h_negative)
+            
+            threshold = 0.65 # Minimum confidence
             
             if score_pos > score_neg and score_pos > threshold:
                 if score_pos > best_score:
                     best_score = score_pos
                     best_label = "POSITIVE_SENTIMENT"
-                    best_evidence = sent
+                    best_evidence = sentences[idx] # Current sentence is the main evidence
             elif score_neg > score_pos and score_neg > threshold:
                 if score_neg > best_score:
                     best_score = score_neg
                     best_label = "NEGATIVE_SENTIMENT"
-                    best_evidence = sent
+                    best_evidence = sentences[idx]
                     
         return best_label, best_score, best_evidence

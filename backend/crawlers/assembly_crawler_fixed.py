@@ -22,8 +22,9 @@ class AssemblyCrawlerFixed:
         self.session.headers.update(self.headers)
         
         # 이미지 저장 폴더 생성
-        if not os.path.exists("img"):
-            os.makedirs("img")
+        self.img_dir = os.path.join(os.path.dirname(__file__), "../../img")
+        if not os.path.exists(self.img_dir):
+            os.makedirs(self.img_dir)
     
     def search_members_with_conditions(self, page=1):
         """검색 조건을 설정하여 국회의원 목록 가져오기"""
@@ -201,7 +202,7 @@ class AssemblyCrawlerFixed:
                 # 파일명에서 특수문자 제거
                 safe_name = "".join(c for c in member_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
                 filename = f"{safe_name.replace(' ', '_')}{ext}"
-                filepath = os.path.join("img", filename)
+                filepath = os.path.join(self.img_dir, filename)
                 
                 with open(filepath, "wb") as f:
                     f.write(response.content)
@@ -245,12 +246,14 @@ class AssemblyCrawlerFixed:
         print("\n3단계: 결과 저장")
         
         # JSON 저장
-        with open("assembly_members_complete.json", "w", encoding="utf-8") as f:
+        json_path = os.path.join(os.path.dirname(__file__), "../../data/assembly_members_complete.json")
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(detailed_members, f, ensure_ascii=False, indent=2)
         
         # CSV 저장
         if detailed_members:
-            with open("assembly_members_complete.csv", "w", newline="", encoding="utf-8") as f:
+            csv_path = os.path.join(os.path.dirname(__file__), "../../data/assembly_members_complete.csv")
+            with open(csv_path, "w", newline="", encoding="utf-8") as f:
                 # 모든 키를 수집해서 필드명으로 사용
                 all_keys = set()
                 for member in detailed_members:

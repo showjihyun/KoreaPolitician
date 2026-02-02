@@ -33,17 +33,45 @@ services:
       - "5000:5000"  # FastAPI Server
     volumes:
       - ./backend:/app
-      - ./assembly_members_complete.json:/app/assembly_members_complete.json
+      - ./data/assembly_members_complete.json:/app/data/assembly_members_complete.json
       - ./img:/img:ro  # 이미지 폴더 마운트 (읽기 전용)
     environment:
       - TURINGDB_HOST=http://turingdb:6666
       - TURINGDB_GRAPH=korea_politician
       - PYTHONUNBUFFERED=1
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=1234
+      - POSTGRES_DB=postgres
     depends_on:
       turingdb:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
-    command: uvicorn turingdb_server:app --host 0.0.0.0 --port 5000 --reload
+    command: uvicorn api.turingdb_server:app --host 0.0.0.0 --port 5000 --reload
+    networks:
+      - app-network
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: korea-politician-postgres
+    ports:
+      - "25432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=1234
+      - POSTGRES_DB=postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - app-network
 
@@ -74,7 +102,8 @@ networks:
 
 volumes:
   turingdb_data:
+  postgres_data:
   neo4j_data:
   neo4j_logs:
   neo4j_import:
-  neo4j_plugins: 
+  neo4j_plugins:

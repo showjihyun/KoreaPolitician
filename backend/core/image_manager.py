@@ -19,31 +19,22 @@ logger = logging.getLogger(__name__)
 
 class ImageManager:
     def __init__(self, base_dir: str = ".."):
-        # 1. Try base_dir (default "..")
-        self.base_dir = Path(base_dir)
+        # We are in backend/core/image_manager.py
+        # Root is ../../
+        self.base_dir = Path(__file__).resolve().parent.parent.parent
         self.images_dir = self.base_dir / "img"
         
-        # 2. Try current directory if base_dir doesn't work
+        # Fallbacks for Docker or other environments
         if not self.images_dir.exists():
-            self.images_dir = Path(".") / "img"
-            
-        # 3. Try backend/../img if still not found
-        if not self.images_dir.exists():
-            self.images_dir = Path("backend").parent / "img"
-
-        # 4. Try absolute /img or Docker app paths
-        if not self.images_dir.exists():
-            parent_dir = Path("/app").parent
-            if (parent_dir / "img").exists():
-                self.images_dir = parent_dir / "img"
-            elif Path("/img").exists():
+            if Path("/img").exists():
                 self.images_dir = Path("/img")
+            elif Path("/app/img").exists():
+                self.images_dir = Path("/app/img")
         
-        self.thumbnails_dir = Path("data") / "thumbnails"
+        self.thumbnails_dir = self.base_dir / "data" / "thumbnails"
         if not self.thumbnails_dir.exists():
-            # Try to create it relative to where we found images if images_dir is known
-            root = self.images_dir.parent if self.images_dir.exists() else Path(".")
-            self.thumbnails_dir = root / "data" / "thumbnails"
+            if Path("/app/data/thumbnails").exists():
+                self.thumbnails_dir = Path("/app/data/thumbnails")
             
         self.thumbnails_dir.mkdir(parents=True, exist_ok=True)
         

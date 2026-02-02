@@ -5,7 +5,7 @@
 
 import json
 import re
-from graph_storage import graph_storage
+from core.graph_storage import graph_storage
 
 
 class SimpleImporter:
@@ -230,7 +230,7 @@ class SimpleImporter:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Simple Graph Importer")
-    parser.add_argument('--json', type=str, default="assembly_members_complete.json", help='JSON 파일 경로')
+    parser.add_argument('--json', type=str, default="data/assembly_members_complete.json", help='JSON 파일 경로')
     args = parser.parse_args()
     
     importer = SimpleImporter()

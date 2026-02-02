@@ -12,8 +12,9 @@ UNIT_CD = "100022"  # 제22대 국회의원
 
 class AssemblyCrawlerPlaywright:
     def __init__(self):
-        if not os.path.exists("img"):
-            os.makedirs("img")
+        self.img_dir = os.path.join(os.path.dirname(__file__), "../../img")
+        if not os.path.exists(self.img_dir):
+            os.makedirs(self.img_dir)
 
     def download_image(self, img_url, member_name):
         if not img_url:
@@ -23,7 +24,7 @@ class AssemblyCrawlerPlaywright:
             if response.status_code == 200:
                 ext = os.path.splitext(urlparse(img_url).path)[1] or ".jpg"
                 filename = f"{member_name.replace(' ', '_')}{ext}"
-                filepath = os.path.join("img", filename)
+                filepath = os.path.join(self.img_dir, filename)
                 with open(filepath, "wb") as f:
                     f.write(response.content)
                 print(f"이미지 다운로드 완료: {filename}")
@@ -229,12 +230,14 @@ class AssemblyCrawlerPlaywright:
         print("[저장] JSON, CSV, 이미지")
         
         # JSON 저장
-        with open("assembly_members_complete.json", "w", encoding="utf-8") as f:
+        json_path = os.path.join(os.path.dirname(__file__), "../../data/assembly_members_complete.json")
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(members, f, ensure_ascii=False, indent=2)
         
         # CSV 저장
         if members:
-            with open("assembly_members_complete.csv", "w", newline="", encoding="utf-8") as f:
+            csv_path = os.path.join(os.path.dirname(__file__), "../../data/assembly_members_complete.csv")
+            with open(csv_path, "w", newline="", encoding="utf-8") as f:
                 all_keys = set()
                 for member in members:
                     all_keys.update(member.keys())

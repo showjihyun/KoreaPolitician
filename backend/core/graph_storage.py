@@ -42,7 +42,7 @@ class GraphStorage:
                             source_id TEXT,
                             target_id TEXT,
                             type TEXT,
-                            properties JSONB,
+                            properties JSONB, -- Includes score, social_impact_score, impact_factors, etc.
                             PRIMARY KEY (source_id, target_id, type)
                         );
                         CREATE TABLE IF NOT EXISTS turing_logs (

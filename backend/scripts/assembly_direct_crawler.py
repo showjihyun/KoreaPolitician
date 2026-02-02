@@ -22,8 +22,9 @@ class AssemblyDirectCrawler:
         self.session.headers.update(self.headers)
         
         # 이미지 저장 폴더 생성
-        if not os.path.exists("img"):
-            os.makedirs("img")
+        self.img_dir = os.path.join(os.path.dirname(__file__), "../../img")
+        if not os.path.exists(self.img_dir):
+            os.makedirs(self.img_dir)
     
     def get_known_member_ids(self):
         """알려진 국회의원 ID 목록 (샘플)"""
@@ -158,7 +159,7 @@ class AssemblyDirectCrawler:
                 # 파일명에서 특수문자 제거
                 safe_name = "".join(c for c in member_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
                 filename = f"{safe_name.replace(' ', '_')}{ext}"
-                filepath = os.path.join("img", filename)
+                filepath = os.path.join(self.img_dir, filename)
                 
                 with open(filepath, "wb") as f:
                     f.write(response.content)
@@ -195,11 +196,13 @@ class AssemblyDirectCrawler:
             print(f"\n=== 결과 저장 ===")
             
             # JSON 저장
-            with open("assembly_members_direct.json", "w", encoding="utf-8") as f:
+            json_path = os.path.join(os.path.dirname(__file__), "../../data/assembly_members_direct.json")
+            with open(json_path, "w", encoding="utf-8") as f:
                 json.dump(collected_members, f, ensure_ascii=False, indent=2)
             
             # CSV 저장
-            with open("assembly_members_direct.csv", "w", newline="", encoding="utf-8") as f:
+            csv_path = os.path.join(os.path.dirname(__file__), "../../data/assembly_members_direct.csv")
+            with open(csv_path, "w", newline="", encoding="utf-8") as f:
                 if collected_members:
                     all_keys = set()
                     for member in collected_members:

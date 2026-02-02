@@ -3,8 +3,8 @@ GraphDB 데이터 구조 시각화 도구
 Node, Edge, Properties를 보기 좋게 출력
 """
 
-from graph_storage import graph_storage
-from simple_importer import SimpleImporter
+from core.graph_storage import graph_storage
+from scripts.simple_importer import SimpleImporter
 import json
 import os
 
@@ -203,7 +203,7 @@ def main():
     if graph_storage.get_statistics()['total_nodes'] == 0:
         print("데이터를 로드하는 중...")
         importer = SimpleImporter()
-        importer.import_data("assembly_members_complete.json")
+        importer.import_data("data/assembly_members_complete.json")
         print()
     
     # 1. 데이터베이스 개요

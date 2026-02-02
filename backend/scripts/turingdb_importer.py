@@ -467,7 +467,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="TuringDB Importer Utility")
     parser.add_argument('--import-members', action='store_true', help='assembly_members_complete.json에서 모든 국회의원 노드만 생성')
-    parser.add_argument('--json', type=str, default="../../assembly_members_complete.json", help='JSON 파일 경로')
+    parser.add_argument('--json', type=str, default="data/assembly_members_complete.json", help='JSON 파일 경로')
     parser.add_argument('--import-all', action='store_true', help='전체 데이터 임포트 (노드 + 관계)')
     args = parser.parse_args()
 

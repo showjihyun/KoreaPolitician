@@ -3,9 +3,9 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
-from graph_storage import graph_storage
-from simple_importer import SimpleImporter
-from image_manager import image_manager
+from core.graph_storage import graph_storage
+from scripts.simple_importer import SimpleImporter
+from core.image_manager import image_manager
 import logging
 from collections import deque
 import datetime
@@ -62,7 +62,7 @@ async def startup_event():
     }
     graph_storage.init_db(db_config)
 
-    json_file = "assembly_members_complete.json"
+    json_file = "data/assembly_members_complete.json"
     # Check if nodes exist, if not import from JSON
     if os.path.exists(json_file) and graph_storage.get_statistics()["total_nodes"] == 0:
         logging.info("Loading data on startup...")
@@ -196,25 +196,18 @@ def serve_image(filename: str, thumbnail: bool = False):
 def dcp_context(subject: str, target: str):
     """
     DCP 알고리즘을 위한 문맥(동료 및 그들의 타겟에 대한 태도) 조회
+    - 논문 정의에 따라 '동료(Ally)'는 동일 정당 소석 또는 우호 관계인 인물임.
     """
     # 1. Find Subject node
     sub_nodes = graph_storage.find_nodes("Member", {"name": f"CONTAINS:{subject}"})
     if not sub_nodes:
         return JSONResponse(content={"allies_context": []})
     
-    sub_id = sub_nodes[0]["id"]
+    sub_node = sub_nodes[0]
+    sub_id = sub_node["id"]
+    sub_party = sub_node["properties"].get("party")
     
-    # 2. Find Allies (Simplification: Same Party or POSITIVE edges)
-    # For now, let's use Belong_To Party.
-    # Find Party of Subject
-    # This requires traversing: Member -(BELONGS_TO)-> Party
-    # And then Party <-(BELONGS_TO)- Other Member
-    
-    # Actually, let's just use direct POSITIVE_SENTIMENT neighbors as 'Allies' for strictness?
-    # Or Party. Paper says "Ally".
-    # Implementation: Let's find nodes connected via POSITIVE_SENTIMENT (outgoing from subject)
-    # AND nodes in same party.
-    
+    # 2. Find Allies
     allies = set()
     
     # Strategy A: Outgoing Positive Sentiment
@@ -223,8 +216,12 @@ def dcp_context(subject: str, target: str):
         if r["edge"]["type"] == "POSITIVE_SENTIMENT":
              if r["node"]: allies.add(r["node"]["id"])
 
-    # Strategy B: Incoming Positive Sentiment (Friends support me?) -> Maybe.
-    # Let's stick to A for now.
+    # Strategy B: Same Party (Paper's 'Organizational Resonance')
+    if sub_party:
+        party_members = graph_storage.find_nodes("Member", {"party": sub_party})
+        for pm in party_members:
+            if pm["id"] != sub_id:
+                allies.add(pm["id"])
     
     # 3. For each Ally, check relation to Target
     tgt_nodes = graph_storage.find_nodes("Member", {"name": f"CONTAINS:{target}"})
@@ -235,10 +232,7 @@ def dcp_context(subject: str, target: str):
     context_data = []
     
     for ally_id in allies:
-        # Check Ally -> Target
-        # We need to find edge from ally_id to tgt_id
-        # graph_storage doesn't have direct (u, v) lookup easily exposed?
-        # We get relationships of ally
+        # Fetch relationships from Ally to Target
         ally_rels = graph_storage.get_relationships(ally_id, direction="out")
         for ar in ally_rels:
             if ar["node"]["id"] == tgt_id:
@@ -246,10 +240,10 @@ def dcp_context(subject: str, target: str):
                 edge = ar["edge"]
                 if edge["type"] in ["POSITIVE_SENTIMENT", "NEGATIVE_SENTIMENT"]:
                     weight = edge["properties"].get("score", 0.5)
-                    # Use 'count' to boost weight?
                     count = edge["properties"].get("count", 1)
-                    # Heuristic: weight * log(count)?
-                    effective_weight = weight * (1 + (0.1 * count)) 
+                    
+                    # Heuristic: weight boosted by count (frequency of attack/support)
+                    effective_weight = weight * (1 + (0.05 * count)) 
                     
                     context_data.append({
                         "ally": ar["node"]["properties"].get("name"),

@@ -1,7 +1,7 @@
 import logging
 import time
-from affective_analysis import AffectiveAnalyzer
-from dcp_algorithm import DCPCalculator
+from crawlers.affective_analysis import AffectiveAnalyzer
+from core.dcp_algorithm import DCPCalculator
 # from news_crawler_pipeline import RobustCrawler # Removed as class is not exposed
 
 # Setup logging

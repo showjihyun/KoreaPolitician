@@ -7,7 +7,7 @@ NEO4J_USER = "neo4j"
 NEO4J_PASSWORD = "patrol-alpine-thomas-nepal-deposit-3273"  # Docker 실행 시 NEO4J_AUTH=neo4j/test 기준
 
 # CSV 파일 읽기
-df = pd.read_csv("politicians.csv", encoding="utf-8")
+df = pd.read_csv(os.path.join(os.path.dirname(__file__), "../../data/politicians.csv"), encoding="utf-8")
 
 # Neo4j 연결
 graph = Graph(NEO4J_URL, auth=(NEO4J_USER, NEO4J_PASSWORD))
