@@ -121,28 +121,37 @@ class PlaywrightAssemblyCrawler:
         
         return members
     
-    async def navigate_to_page(self, page, page_num):
-        """특정 페이지로 이동"""
+    async def set_page_size_max(self, page):
+        """페이지 크기를 300으로 설정 시도"""
         try:
-            if page_num == 1:
-                await page.goto(self.base_url, wait_until='networkidle')
-            else:
-                # 페이지 번호 클릭 또는 직접 이동
-                page_link = page.locator(f'a:has-text("{page_num}")')
-                if await page_link.count() > 0:
-                    await page_link.click()
-                    await page.wait_for_load_state('networkidle')
-                else:
-                    # JavaScript로 페이지 이동 함수 호출
-                    await page.evaluate(f'goPage({page_num})')
-                    await page.wait_for_load_state('networkidle')
+            logger.info("Attempting to set page size to 300...")
+            # hidden input 값 변경
+            await page.evaluate("""() => {
+                const rowsInput = document.querySelector('input[name="rows"]');
+                if (rowsInput) rowsInput.value = '300';
+                
+                const pageSizeSelect = document.querySelector('select[name="pageSize"]');
+                if (pageSizeSelect) {
+                    // 옵션이 없어도 강제 추가 시도
+                    const option = document.createElement('option');
+                    option.value = '300';
+                    option.text = '300';
+                    pageSizeSelect.add(option);
+                    pageSizeSelect.value = '300';
+                }
+            }""")
             
-            await asyncio.sleep(1)
-            return True
+            # 검색 버튼 클릭하여 적용
+            search_btn = page.locator('#btnSearch')
+            if await search_btn.count() > 0:
+                await search_btn.click()
+                await page.wait_for_load_state('networkidle')
+                await asyncio.sleep(3) # 데이터 로드 대기
+                return True
         except Exception as e:
-            logger.error(f"Error navigating to page {page_num}: {e}")
-            return False
-    
+            logger.error(f"Failed to set page size: {e}")
+        return False
+
     async def crawl_all_members(self):
         """전체 의원 데이터 수집"""
         logger.info("=" * 60)
@@ -152,7 +161,7 @@ class PlaywrightAssemblyCrawler:
         all_members = []
         
         async with async_playwright() as p:
-            # 브라우저 시작 (headless=False로 디버깅 가능)
+            # 브라우저 시작 (headless=True for speed, False for debugging)
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context(
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -161,39 +170,81 @@ class PlaywrightAssemblyCrawler:
             
             try:
                 # 첫 페이지 로드
+                logger.info(f"Navigating to {self.base_url}")
                 await page.goto(self.base_url, wait_until='networkidle')
                 await asyncio.sleep(2)
                 
-                # 페이지 구조 분석
-                has_tbody = await self.analyze_page_structure(page)
+                # 한 페이지에 모두 표시 시도 (Turbo Mode)
+                await self.set_page_size_max(page)
                 
-                if not has_tbody:
-                    logger.warning("tbody#list-result-sect not found. Check debug HTML file.")
+                # 현재 페이지에서 추출
+                logger.info("Extracting members from page...")
+                members = await self.extract_members_from_page(page, "Current")
+                all_members.extend(members)
+                logger.info(f"Initial collection: {len(members)} members")
                 
-                # 전체 페이지 수 확인
-                total_pages = await self.get_total_pages(page)
-                logger.info(f"Total pages to crawl: {total_pages}")
-                
-                # 각 페이지 순회
-                for page_num in range(1, total_pages + 1):
-                    logger.info(f"\n=== Crawling page {page_num}/{total_pages} ===")
+                # 300명이 안 되면 페이지네이션 진행
+                if len(all_members) < 290: # 300명 근처가 아니면
+                    logger.info("Did not collect all members in one go. Starting pagination...")
                     
-                    # 페이지 이동
-                    if page_num > 1:
-                        success = await self.navigate_to_page(page, page_num)
-                        if not success:
-                            logger.warning(f"Failed to navigate to page {page_num}, skipping...")
-                            continue
+                    # 전체 페이지 수 재확인 (페이지당 10명 기준일 수 있음)
+                    total_pages = 15 # 넉넉하게
                     
-                    # 의원 정보 추출
-                    members = await self.extract_members_from_page(page, page_num)
-                    all_members.extend(members)
-                    
-                    logger.info(f"Page {page_num} completed: {len(members)} members collected")
-                    logger.info(f"Total so far: {len(all_members)} members")
-                    
-                    # 서버 부하 방지
-                    await asyncio.sleep(1)
+                    for page_num in range(2, total_pages + 1):
+                        logger.info(f"\n=== Navigating to page {page_num} ===")
+                        
+                        # 다음 페이지로 이동
+                        # 1. 숫자 버튼 클릭 시도
+                        next_page_btn = page.locator(f'#list-sect-pager a.number:has-text("{page_num}")')
+                        
+                        # 2. 없으면 '다음 10페이지' 버튼 클릭 (11페이지 넘어갈 때)
+                        if await next_page_btn.count() == 0:
+                            next_10_btn = page.locator('#list-sect-pager a.btn_page_next')
+                            if await next_10_btn.count() > 0:
+                                await next_10_btn.click()
+                                await asyncio.sleep(2)
+                                next_page_btn = page.locator(f'#list-sect-pager a.number:has-text("{page_num}")')
+                        
+                        if await next_page_btn.count() > 0:
+                            # 현재 첫 번째 행의 이름 저장 (변경 확인용)
+                            first_row_name = await page.locator('tbody#list-result-sect tr').first.locator('td').nth(2).text_content() if await page.locator('tbody#list-result-sect tr').count() > 0 else ""
+                            
+                            await next_page_btn.click()
+                            
+                            # 데이터 변경 대기 (이름이 바뀔 때까지)
+                            try:
+                                await page.wait_for_function(
+                                    f"document.querySelector('tbody#list-result-sect tr td:nth-child(3)').textContent.trim() !== '{first_row_name.strip()}'",
+                                    timeout=5000
+                                )
+                            except:
+                                await asyncio.sleep(2) # 타임아웃 시 그냥 대기
+                                
+                            # 추출
+                            new_members = await self.extract_members_from_page(page, page_num)
+                            if not new_members:
+                                logger.info("No members found on this page. Stopping.")
+                                break
+                                
+                            # 중복 방지
+                            existing_names = set(m['name'] for m in all_members)
+                            for m in new_members:
+                                if m['name'] not in existing_names:
+                                    all_members.append(m)
+                                    
+                            logger.info(f"Total collected so far: {len(all_members)}")
+                            
+                            if len(all_members) >= 300:
+                                logger.info("Reached 300 members!")
+                                break
+                        else:
+                            logger.info(f"Page {page_num} link not found. Assuming end of list.")
+                            break
+            
+            except Exception as e:
+                logger.error(f"Critical error: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
             
             finally:
                 await browser.close()
