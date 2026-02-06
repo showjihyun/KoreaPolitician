@@ -14,14 +14,14 @@ SYNDEO는 대한민국 정치 지형의 복잡한 관계를 매핑하고 분석�
 ## ✨ 주요 기능
 
 ### 1. 3D 신경망 정치 관계도
-![3D 네트워크 시각화](file:///C:/Users/CHOISOOYEON/.gemini/antigravity/brain/cc5ee2bf-69b5-4799-9f4f-641b49f00f02/media__1770390516806.png)
+![3D Network Visulization]<img width="2697" height="1261" alt="image" src="https://github.com/user-attachments/assets/bcbcc10c-b065-4bc1-8475-755634261358" />)
 *제22대 국회 의원 296명의 복잡한 관계망을 고속 3D 엔진(WebGL)으로 시각화합니다.*
 - **다이내믹 인터랙션**: 수천 개의 정치적 관계를 회전, 확대, 축소하며 탐색할 수 있습니다.
 - **감성 분석 매핑**: AI 감성 분석을 통해 의원 간의 긍정/부정적 관계를 시각적으로 인코딩합니다.
 - **정당별 클러스터링**: 소속 정당(민주당, 국민의힘, 혁신당 등)에 따른 실시간 노드 그룹화.
 
 ### 2. 실시간 SNS 트렌드 및 화제성 분석
-![SNS 트렌드 대시보드](file:///C:/Users/CHOISOOYEON/.gemini/antigravity/brain/cc5ee2bf-69b5-4799-9f4f-641b49f00f02/media__1770390887212.png)
+![SNS Trend Dashboard]<img width="2700" height="1264" alt="image" src="https://github.com/user-attachments/assets/dd52eb02-e435-4cac-af50-5aa6e2e9b95e" />)
 *X(트위터), 유튜브, 인스타그램 등 디지털 공간에서의 영향력을 실시간 모니터링합니다.*
 - **화제성 스코어링**: 독자적인 알고리즘을 통한 실시간 화제성 및 사회적 영향력 점수 산출.
 - **교차 언급 탐지**: 정치인들이 디지털 공간에서 서로를 언급하는 시점을 자동 추적.
