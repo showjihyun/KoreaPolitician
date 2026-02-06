@@ -97,7 +97,7 @@ graph TD
    ```
 3. **데이터 파이프라인 실행**
    ```bash
-   $env:PYTHONPATH="backend"
+   $env:PYTHONPATH="backend"ㅇ
    python backend/scripts/run_news_sns.py
    ```
 4. **접속 주소**
@@ -107,9 +107,9 @@ graph TD
 ---
 
 ## 🤝 기여 및 라이선스
-본 프로젝트는 정치 데이터 인텔리전스 연구 이니셔티브의 일환입니다.
+본 프로젝트는 정치 데이터 인텔리전스 연구 이니셔티브의 일환입니다. 반박시 니말이
 - **라이선스**: MIT
 - **데이터 출처**: 국회 공식 데이터, 뉴스/SNS 오픈 API.
 
 ---
-*Created by Choi Ji Hyun for Advanced Political Data Science.*
+*Created by Choi Ji Hyun for Advanced Political Data Science Lab.*
