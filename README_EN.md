@@ -14,14 +14,14 @@ SYNDEO is a cutting-edge political intelligence platform designed to map and ana
 ## ✨ Key Features
 
 ### 1. 3D Neural Political Graph
-![3D Network Visualization](file:///C:/Users/CHOISOOYEON/.gemini/antigravity/brain/cc5ee2bf-69b5-4799-9f4f-641b49f00f02/media__1770390516806.png)
+<img width="2300" height="1261" alt="image" src="https://github.com/user-attachments/assets/bcbcc10c-b065-4bc1-8475-755634261358" />
 *Visualize the intricate web of all 296 members of the 22nd Assembly in a high-performance 3D space.*
 - **Dynamic Interaction**: Rotate, zoom, and pan through thousands of political relations.
 - **Sentiment Mapping**: Visual encoding of positive/negative relationships based on AI sentiment analysis.
 - **Party Clustering**: Real-time clustering of nodes by political affiliation (DPK, PPP, NHR, etc.).
 
 ### 2. Real-time SNS Trends & Virality
-![SNS Trends Dashboard](file:///C:/Users/CHOISOOYEON/.gemini/antigravity/brain/cc5ee2bf-69b5-4799-9f4f-641b49f00f02/media__1770390887212.png)
+<img width="2300" height="1264" alt="image" src="https://github.com/user-attachments/assets/dd52eb02-e435-4cac-af50-5aa6e2e9b95e" />
 *Monitor digital presence and influence across X (Twitter), YouTube, and Instagram.*
 - **Virality Scoring**: Proprietary algorithm to calculate hotness and social impact scores.
 - **Cross-Mention Detection**: Automated tracking of when politicians reference one another in digital spaces.
