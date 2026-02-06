@@ -60,17 +60,38 @@ def get_article_text(url):
         logger.warning(f"[본문 크롤링 실패] {url} -> {e}")
         return ""
 
+POLITICAL_KEYWORDS = [
+    '의원', '국회', '정당', '후보', '대표', '대변인', '위원', '장관', '지사', '시장', '대통령', '당대표', '원내대표', '최고위원',
+    '더불어민주당', '국민의힘', '정의당', '조국혁신당', '개혁신당', '기본소득당', '진보당', '민주당', '국힘', '여당', '야당'
+]
+
 def extract_politicians(text, name_list):
+    """
+    텍스트에서 국회의원 이름을 추출하되, 동명이인 오탐을 줄이기 위해 
+    정치 관련 키워드가 포함된 경우에만 유효한 것으로 판단함.
+    """
+    # 1. 정치 관련 키워드가 문맥(text)에 하나라도 있는지 확인
+    has_keyword = any(kw in text for kw in POLITICAL_KEYWORDS)
+    
+    # 키워드가 없으면 정치 기사가 아니거나 동명이인일 확률이 높으므로 빈 리스트 반환
+    if not has_keyword:
+        return []
+
     found = set()
     for name in name_list:
         if name in text:
             found.add(name)
     return list(found)
 
+# CPU 코어의 80%를 사용하여 병렬 처리 수 결정
+MAX_WORKERS = max(1, int((os.cpu_count() or 4) * 0.8))
+logger.info(f"Setting MAX_WORKERS to {MAX_WORKERS} (80% of CPU)")
+
 def save_to_postgresql(articles, db_config):
     try:
         with psycopg2.connect(**db_config) as conn:
             with conn.cursor() as cur:
+                # 테이블 생성 (스키마 동일)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS public.news_sentiment (
                         id SERIAL PRIMARY KEY,
@@ -88,21 +109,38 @@ def save_to_postgresql(articles, db_config):
                     CREATE INDEX IF NOT EXISTS idx_news_sentiment_base_date ON public.news_sentiment (base_date);
                     CREATE INDEX IF NOT EXISTS idx_news_sentiment_url ON public.news_sentiment (url);
                 """)
+                
                 today_yyyymmdd = datetime.now().strftime('%Y%m%d')
+                
                 for art in articles:
-                    # 중복 체크 (URL 기준)
+                    # 1. URL 중복 확인
                     cur.execute("SELECT id FROM public.news_sentiment WHERE url = %s LIMIT 1", (art['url'],))
-                    if cur.fetchone():
-                        continue
-                        
-                    cur.execute("""
-                        INSERT INTO public.news_sentiment (title, url, press, date, politicians, sentiment_label, sentiment_score, content, base_date)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """, (
-                        art['title'], art['url'], art['press'], art['date'],
-                        ",".join(art.get('politicians', [])), art.get('sentiment_label', ""), 
-                        art.get('sentiment_score', 0.0), art.get('content', ""), today_yyyymmdd
-                    ))
+                    row = cur.fetchone()
+                    
+                    if row:
+                        # 2. 존재하면 UPDATE (덮어쓰기)
+                        cur.execute("""
+                            UPDATE public.news_sentiment
+                            SET title=%s, press=%s, date=%s, politicians=%s, 
+                                sentiment_label=%s, sentiment_score=%s, content=%s, 
+                                base_date=%s, inserted_at=CURRENT_TIMESTAMP
+                            WHERE id=%s
+                        """, (
+                            art['title'], art['press'], art['date'],
+                            ",".join(art.get('politicians', [])), art.get('sentiment_label', ""), 
+                            art.get('sentiment_score', 0.0), art.get('content', ""), today_yyyymmdd,
+                            row[0]
+                        ))
+                    else:
+                        # 3. 없으면 INSERT
+                        cur.execute("""
+                            INSERT INTO public.news_sentiment (title, url, press, date, politicians, sentiment_label, sentiment_score, content, base_date)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """, (
+                            art['title'], art['url'], art['press'], art['date'],
+                            ",".join(art.get('politicians', [])), art.get('sentiment_label', ""), 
+                            art.get('sentiment_score', 0.0), art.get('content', ""), today_yyyymmdd
+                        ))
                 conn.commit()
     except Exception as e:
         logger.error(f"[DB 저장 중 오류] {e}")
@@ -207,12 +245,90 @@ def get_target_politicians(db_config, limit=50):
     except:
         return POLITICIANS[:limit]
 
-def crawl_naver_news_search(keyword, max_articles=5):
+SECTION_CODES = {
+    "Politics": [("100", "264"), ("100", "265"), ("100", "268")], # 청와대, 국회/정당, 북한
+    "Economy": [("101", "259"), ("101", "261")], # 금융, 산업/재계
+    "Society": [("102", "251"), ("102", "249")], # 노동, 사건사고
+}
+
+def crawl_naver_section(sid1, sid2, max_pages=3):
+    """네이버 뉴스 섹션별 크롤링 (Reverse Search)"""
+    base_url = "https://news.naver.com/main/list.naver?mode=LSD&mid=sec"
     articles = []
-    search_url = f"https://search.naver.com/search.naver?where=news&query={requests.utils.quote(keyword)}&sort=0"
+    
+    # 섹션 이름 찾기 (로깅용)
+    section_name = "Unknown"
+    for sec, codes in SECTION_CODES.items():
+        if (sid1, sid2) in codes:
+            section_name = f"{sec}({sid1}-{sid2})"
+            break
+            
+    logger.info(f"[{section_name}] 섹션 크롤링 시작 (최대 {max_pages} 페이지)")
+    
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+        context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        page = context.new_page()
+        
+        for page_num in range(1, max_pages + 1):
+            url = f"{base_url}&sid1={sid1}&sid2={sid2}&page={page_num}"
+            try:
+                logger.info(f"[{section_name}] 페이지 {page_num}/{max_pages} 로드 중: {url}")
+                page.goto(url, timeout=30000)
+                try:
+                    page.wait_for_selector(".list_body", timeout=10000)
+                except:
+                    logger.warning(f"[{section_name}] .list_body 요소를 찾을 수 없음 (페이지 {page_num})")
+                    continue
+                
+                items = page.query_selector_all(".list_body ul li")
+                logger.info(f"[{section_name}] 페이지 {page_num}: 기사 {len(items)}개 발견. 분석 시작...")
+                
+                matched_count = 0
+                for item in items:
+                    title_el = item.query_selector("dt:not(.photo) a") or item.query_selector("a")
+                    if not title_el: continue
+                    
+                    title = title_el.inner_text().strip()
+                    url = title_el.get_attribute("href")
+                    preview_el = item.query_selector("dd span.lede")
+                    preview = preview_el.inner_text().strip() if preview_el else ""
+                    
+                    found_names = extract_politicians(title + " " + preview, POLITICIANS)
+                    if found_names:
+                        logger.info(f"  -> [MATCH] '{found_names}' 발견: {title[:30]}...")
+                        matched_count += 1
+                        press_el = item.query_selector("span.writing")
+                        press = press_el.inner_text().strip() if press_el else "Naver"
+                        articles.append({
+                            "title": title, 
+                            "url": url, 
+                            "press": press, 
+                            "date": datetime.now().strftime("%Y-%m-%d")
+                        })
+                logger.info(f"[{section_name}] 페이지 {page_num} 완료: {matched_count}개 기사 매칭됨.")
+                        
+            except Exception as e:
+                logger.warning(f"Section crawl failed ({sid1}-{sid2} p{page_num}): {e}")
+                
+        browser.close()
+    
+    logger.info(f"[{section_name}] 크롤링 종료. 총 {len(articles)}개 유효 기사 수집.")
+    return articles
+
+def crawl_naver_news_search(keyword, max_articles=10):
+    articles = []
+    # sort=1 (최신순), pd=3 (기간 설정), ds/de (날짜 범위: 1년)
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=365)
+    ds = start_date.strftime("%Y.%m.%d")
+    de = end_date.strftime("%Y.%m.%d")
+    
+    search_url = f"https://search.naver.com/search.naver?where=news&query={requests.utils.quote(keyword)}&sort=1&pd=3&ds={ds}&de={de}"
+    
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         page = context.new_page()
         try:
             page.goto(search_url, timeout=30000)
@@ -355,16 +471,20 @@ def collect_all_sources_for_name(name):
     """특정 의원에 대한 다국어/다양한 소스 수집"""
     results = []
     try:
-        results.extend(crawl_naver_news_search(f"{name} 정치", max_articles=2))
-        results.extend(crawl_naver_news_search(f"{name} 의정활동", max_articles=2))
+        # 검색어 다양화 및 수집 개수 증가 (2 -> 10)
+        results.extend(crawl_naver_news_search(f"{name} 의원", max_articles=5))
+        results.extend(crawl_naver_news_search(f"{name} 국회", max_articles=5)) # 총 10개
     except: pass
     
-    intl_keyword = f"{name} South Korea"
-    try:
-        results.extend(crawl_cnn_search(intl_keyword, max_articles=1))
-        results.extend(crawl_bbc_search(intl_keyword, max_articles=1))
-        results.extend(crawl_nhk_search(intl_keyword, max_articles=1))
-    except: pass
+    # intl_keyword = f"{name} South Korea"
+    # try:
+    #     results.extend(crawl_cnn_search(intl_keyword, max_articles=1))
+    #     results.extend(crawl_bbc_search(intl_keyword, max_articles=1))
+    #     results.extend(crawl_nhk_search(intl_keyword, max_articles=1))
+    # except: pass
+    
+    if results:
+        logger.info(f"[Keywords] '{name}' 수집 완료: {len(results)}건")
     
     return results
 
@@ -372,30 +492,37 @@ def run_pipeline(db_config):
     logger.info("--------------------------------------------------")
     logger.info(f"[파이프라인 실행 시작] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
-    # 1. 대상 선정 (데이터가 부족한 20명 우선 수집)
-    target_names = get_target_politicians(db_config, limit=20)
-    logger.info(f"이번 회차 타겟 수집 대상: {target_names}")
+    # 1. 대상 선정 (전체 의원 수집)
+    # target_names = get_target_politicians(db_config, limit=20)
+    target_names = POLITICIANS 
+    logger.info(f"이번 회차 타겟 수집 대상: 전체 {len(target_names)}명 병렬 수집 시작")
     
-    # 2. 뉴스 소스 수집 (병렬)
+    # 2. 뉴스 소스 수집 (병렬 - 키워드 검색 + 섹션 스캔)
     news_pool = []
-    with ThreadPoolExecutor(max_workers=5) as collection_executor:
-        future_to_name = {collection_executor.submit(collect_all_sources_for_name, name): name for name in target_names}
-        for future in as_completed(future_to_name):
+    # 2. 뉴스 소스 수집 (병렬 - 키워드 검색 + 섹션 스캔)
+    news_pool = []
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as collection_executor:
+        futures = {}
+        
+        # A. 섹션별 크롤링 (Reverse Search) - 우선 순위 높음
+        logger.info("[섹션별 뉴스 수집 시작] 정치, 경제, 사회 분야 스캔...")
+        for section, codes in SECTION_CODES.items():
+            for sid1, sid2 in codes:
+                futures[collection_executor.submit(crawl_naver_section, sid1, sid2)] = f"Section: {section} ({sid1}-{sid2})"
+                
+        # B. 개별 의원 키워드 검색
+        logger.info("[개별 의원 키워드 검색 작업 등록 중...]")
+        for name in target_names:
+             futures[collection_executor.submit(collect_all_sources_for_name, name)] = f"Keyword: {name}"
+        
+        for future in as_completed(futures):
             try:
-                news_pool.extend(future.result())
+                res = future.result()
+                if res: news_pool.extend(res)
             except Exception as e:
-                logger.error(f"Error during collection for a politician: {e}")
+                logger.error(f"Collection error: {e}")
             
-    # 3. 글로벌 이슈 수집
-    logger.info("[글로벌 일반 뉴스 수집 시작]")
-    try:
-        news_pool.extend(crawl_cnn_search("Asia Politics", max_articles=3))
-        news_pool.extend(crawl_bbc_search("South Korea News", max_articles=3))
-        news_pool.extend(crawl_nhk_search("Asia Politics", max_articles=3))
-    except Exception as e:
-        logger.warning(f"Global source collection failed: {e}")
-
-    # 4. 중복 제거
+    # 3. 중복 제거
     unique_news = []
     seen_urls = set()
     for n in news_pool:
