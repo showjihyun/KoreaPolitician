@@ -111,5 +111,12 @@ graph TD
 - **라이선스**: MIT
 - **데이터 출처**: 국회 공식 데이터, 뉴스/SNS 오픈 API.
 
+## 📚 관련 연구 및 논문 (Publications)
+
+SYNDEO 시스템의 핵심 알고리즘인 **동적 문맥 전파(DCP)**와 하이브리드 아키텍처에 관한 상세 연구 내용은 다음 논문에서 확인하실 수 있습니다.
+
+- [연구 논문 (한국어) - DCP_paper.txt](docs/DCP_paper.txt)
+- [Research Paper (English) - DCP_paper_en.txt](docs/DCP_paper_en.txt)
+
 ---
 *Created by Choi Ji Hyun for Advanced Political Data Science Lab.*

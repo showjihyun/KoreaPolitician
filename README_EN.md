@@ -111,5 +111,12 @@ This project is part of a political intelligence research initiative.
 - **License**: MIT
 - **Data Source**: Official National Assembly Data, News & SNS Open APIs.
 
+## 📚 Publications
+
+For a detailed technical dive into the **Dynamic Contextual Propagation (DCP)** algorithm and the hybrid architecture powering SYNDEO, please refer to our research papers:
+
+- [Research Paper (English) - DCP_paper_en.txt](docs/DCP_paper_en.txt)
+- [Research Paper (Korean) - DCP_paper.txt](docs/DCP_paper.txt)
+
 ---
-*Created by Choi Ji Hyun for Advanced Political Data Science.*
+*Created by Choi Ji Hyun for Advanced Political Data Science Lab.*
