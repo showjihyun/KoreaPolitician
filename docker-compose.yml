@@ -1,27 +1,6 @@
 version: '3.8'
 
 services:
-  # TuringDB - 고성능 그래프 데이터베이스
-  turingdb:
-    build:
-      context: ./turingdb
-      dockerfile: Dockerfile
-    container_name: korea-politician-turingdb
-    ports:
-      - "6666:6666"  # TuringDB REST API
-    volumes:
-      - turingdb_data:/data
-    restart: unless-stopped
-    environment:
-      - TURINGDB_DATA_DIR=/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6666/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
-    networks:
-      - app-network
 
   # Backend API Server
   backend:
@@ -36,8 +15,6 @@ services:
       - ./data/assembly_members_complete.json:/app/data/assembly_members_complete.json
       - ./img:/img:ro  # 이미지 폴더 마운트 (읽기 전용)
     environment:
-      - TURINGDB_HOST=http://turingdb:6666
-      - TURINGDB_GRAPH=korea_politician
       - PYTHONUNBUFFERED=1
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -45,8 +22,6 @@ services:
       - POSTGRES_PASSWORD=1234
       - POSTGRES_DB=postgres
     depends_on:
-      turingdb:
-        condition: service_healthy
       postgres:
         condition: service_healthy
     restart: unless-stopped
@@ -101,7 +76,6 @@ networks:
     driver: bridge
 
 volumes:
-  turingdb_data:
   postgres_data:
   neo4j_data:
   neo4j_logs:

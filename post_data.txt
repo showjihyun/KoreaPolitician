@@ -1,0 +1,1 @@
+statusCd=&unitCd=100022&gubunId=MA&excelNm=&schHgNm=&schPoly=&schCmit=&schUpOrig=&schOrig=&schSexGbn=&schAge=&schReeleGbn=&schElectGbn=&rows=30&page=1

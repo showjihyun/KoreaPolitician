@@ -229,9 +229,27 @@ class SimpleImporter:
 
 if __name__ == "__main__":
     import argparse
+    import os
+    from dotenv import load_dotenv
+    
+    # .env 파일 로드
+    load_dotenv()
+    
     parser = argparse.ArgumentParser(description="Simple Graph Importer")
     parser.add_argument('--json', type=str, default="data/assembly_members_complete.json", help='JSON 파일 경로')
     args = parser.parse_args()
+    
+    # DB 초기화
+    db_config = {
+        'host': os.getenv('POSTGRES_HOST', 'localhost'),
+        'port': int(os.getenv('POSTGRES_PORT', 5432)),
+        'user': os.getenv('POSTGRES_USER', 'postgres'),
+        'password': os.getenv('POSTGRES_PASSWORD', '1234'),
+        'dbname': os.getenv('POSTGRES_DB', 'postgres'),
+    }
+    
+    print(f"Connecting to DB at {db_config['host']}:{db_config['port']}...")
+    graph_storage.init_db(db_config)
     
     importer = SimpleImporter()
     importer.import_data(args.json)

@@ -1,0 +1,1147 @@
+<!DOCTYPE html><html lang="ko"><head>
+    
+
+
+
+<meta charset="utf-8">
+
+<title>국회의원 - 강경숙</title>
+<meta http-equiv="X-UA-Compatible" content="IE=Edge, chrome=1"> 
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=yes, target-densitydpi=medium-dpi">
+<meta name="format-detection" content="telephone=no">
+<meta name="copyright" content="대한민국국회. ALL RIGHTS RESERVED.">
+<meta name="keywords" content="국회사무처,대한민국국회,정보공개,포털">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="대한민국국회">
+<meta property="og:description" content="내일을 여는 국민의 국회">
+<meta property="og:url" content="https://www.assembly.go.kr">
+<meta property="og:image" content="/og_assembly.png">
+<meta name="twitter:title" content="대한민국국회">
+<meta name="twitter:description" content="내일을 여는 국민의 국회">
+<meta name="twitter:image" content="/og_assembly.png">
+<meta name="twitter:card" content="summary_large_image">
+
+<!-- 트위터 카드 타입은 summary_large_image, summary, photo 중 하나를 선택할 수 있다. -->
+
+<!-- Spring Security CSRF Meta Tags -->
+
+
+<link rel="icon" href="/favicon.ico">
+<link rel="stylesheet" type="text/css" href="/static/portal/css/assm/default.css?ver=0.250808">
+<link rel="stylesheet" type="text/css" href="/static/portal/css/assm/style.css?ver=0.2508082">
+<link rel="stylesheet" type="text/css" href="/static/portal/css/assm/mobile.css?ver=0.250808">
+<script type="text/javascript">
+var glb_ctxPathJS = "";
+</script>
+<script src="/static/commons/js/jquery-1.10.2.min.js"></script>
+
+
+<script src="/static/jslibrary/lodash.min.js?ver=0.250808"></script>
+<script src="/static/portal/js/common.js?ver=0.250808"></script>
+<script src="/static/portal/js/commonHelpUtil.js?ver=0.250808"></script>
+<script src="/static/portal/js/commonStrUtil.js?ver=0.250808"></script>
+<script src="/static/portal/js/navigation.js?ver=0.250808"></script>
+
+<link rel="stylesheet" href="/static/jslibrary/jquery-ui/jquery-ui.css">
+<script src="/static/jslibrary/jquery-ui/jquery-ui.js"></script>
+<script type="text/javascript" language="javascript">
+    window.addEventListener('load', function() {
+    setTimeout(scrollTo, 0, 0, 1);
+    }, false);
+</script>
+<script src="/static/jslibrary/jquery.mousewheel.min.js"></script>
+<link rel="stylesheet" type="text/css" href="/static/portal/css/jquery.mCustomScrollbar.css">
+<script type="text/javascript" src="/static/portal/js/jquery.mCustomScrollbar.js"></script>
+<script src="/static/jslibrary/jquery.serializeObject.min.js"></script>
+<script src="/static/jslibrary/sns/kakao.js"></script>
+
+<script type="text/javascript">
+    Kakao.init("cdf1b9b930a23cabd9b080a3553ab99e");
+</script>
+
+
+<!-- Naver Analytics -->
+<script type="text/javascript" src="//wcs.naver.net/wcslog.js"></script><script type="text/javascript" async="" src="https://ssl.pstatic.net/melona/libs/gfp-nac-module/synchronizer.js"></script>
+<script type="text/javascript">
+    if(!wcs_add) var wcs_add = {};
+    wcs_add["wa"] = "1a0c69697fe3410";
+    if(window.wcs) {
+        wcs_do();
+    }
+</script>
+
+
+
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async="" src="https://www.googletagmanager.com/gtag/js?id=G-8FY090CL6Y"></script>
+<script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){window.dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-8FY090CL6Y');
+</script>
+
+
+    <script type="text/javascript">
+        function openHomepage(url) {
+            if ( glnbInnerIpCheck() ) {
+                alert("인터넷망에서 접속가능합니다.");
+                return false;
+            }
+
+            var winid = window.open(url, 'HomePage');
+            winid.focus();
+        }
+
+    </script>
+</head>
+<body style="">
+
+
+
+
+
+
+
+
+
+
+
+
+<script>
+
+// 내부 IP 대역 목록
+var INNER_IP_BAND_LIST = [];
+var HOME_PAGE_MY_ADDR  = "115.138.168.26";     // PC IP
+
+$(document).ready(function() {
+    $('#lnb_search').bind("click", function (event) {
+        var glnbForm = document.glnbSearchForm;
+        glnbForm.query.focus();
+    });
+
+    $('#btn_search_close').bind("click", function (event) {
+        $('.lnb_util #lnb_search').focus();
+    });
+
+    $('#all-search__input').keydown(function(event) {
+        if(event.keyCode == 13) { 
+            event.preventDefault();
+            if($('#all-search__input').val !=''){
+                glnbSearch();
+            }
+        }
+    });
+
+    $(".gnb_sns_link a[id^=link_glnb_], .ft_menu_etc a[id^=link_glnb_footer_]").on("click", function(event) {
+        event.preventDefault();
+
+        var id = $(this).attr("id");
+        id = id.replace("link_glnb_footer_", "");
+        id = id.replace("link_glnb_", "");
+        var url = ""; 
+        if ( id == "facebook" ) {
+            url = "https://www.facebook.com/NationalAssemblyROK";
+        }
+        else if ( id == "youtube" ) {
+            url = "https://www.youtube.com/channel/UCsWa6xl7KxOolVhROUJ4Ghw";
+        }
+        else if ( id == "twitter" ) {
+            url = "https://twitter.com/news_NA";
+        }
+        else if ( id == "insta" ) {
+            url = "https://www.instagram.com/theassembly_kr/";
+        }
+        else if ( id == "rss" ) {
+            url = "/portal/rss/rss/searchRss.do?menuNo=600251";
+            var winid = window.open(url, id);
+            winid.focus();
+            return;
+        } else {}
+        
+        
+        if ( glnbInnerIpCheck() ) {
+            alert("인터넷망에서 접속가능합니다.");
+            return false;
+        }
+        
+        if ( url != "" )  {
+            var winid = window.open(url, id);
+            winid.focus();
+        }
+    });
+});
+
+
+
+/**
+ * 내부IP 목록 조회
+ */
+function glnbInnerIpCheck() {
+    
+    var innerIpYn = false;
+    if ( INNER_IP_BAND_LIST == null || INNER_IP_BAND_LIST == undefined || INNER_IP_BAND_LIST.length == 0 ) {
+        var params = {
+              menuNo   : $("#menuNo").val()
+            // Spring Security CSRF Param 처리
+            , _csrf    : $("meta[name='_csrf']").attr("content")
+        };
+        $.ajax({
+            type    : 'post',
+            url     : "/portal/main/innerIpBandList.json",
+            data    : params,
+            async   : false,
+            success : function(data) {
+                var resultCode = data.resultCode;
+                var resultMsg  = data.msg;
+                if(resultCode == "success") {
+                    var resultList = data.ipList;
+                    INNER_IP_BAND_LIST = [];
+                    if ( resultList != null && resultList.length > 0 ) {
+                        for ( var i = 0 ; i < resultList.length ; i++ ) {
+                            if ( resultList[ i ].com1Val != "" && resultList[ i ].com1Val != null ) {
+                                INNER_IP_BAND_LIST.push( resultList[ i ].com1Val );
+                            }
+                        }
+
+                        innerIpYn = glnbInnerIpSubCheck();
+                    } else {
+                        innerIpYn = false;
+                    }
+                }
+            }
+        });
+    } else {
+        innerIpYn = glnbInnerIpSubCheck();
+    }
+    
+    return innerIpYn;
+}
+
+/**
+ * 접속 IP 가 내부IP 인지 확인.. 
+ */
+function glnbInnerIpSubCheck() {
+    
+    var innerIpYn = false;
+    var innerIpList = INNER_IP_BAND_LIST;
+    
+//     console.log("------------------------------");
+//     console.log("INNER_IP_BAND_LIST::" + JSON.stringify(INNER_IP_BAND_LIST));
+//     console.log("------------------------------");
+    
+    if ( innerIpList != null && innerIpList.length > 0 ) {
+        for ( var i = 0 ; i < innerIpList.length ; i++ ) {
+            var idx = innerIpList[i].indexOf(".*");
+            if ( idx >= 0 ) {
+                // 내부 IP 대역 확인
+                var innIpBand = innerIpList[i].substring(0, idx);
+                if ( HOME_PAGE_MY_ADDR.indexOf(innIpBand) >= 0 ) {
+                    innerIpYn = true;
+                    break;
+                }
+            } else {
+                // 내부 IP 확인
+                if ( HOME_PAGE_MY_ADDR == innerIpList[i] ) {
+                    innerIpYn = true;
+                    break;
+                }
+            }
+        }
+    } else {
+        innerIpYn = false;
+    }
+    
+    // console.log("inner ip YN::"+innerIpYn);
+    return innerIpYn;
+}
+//검색결과 확인
+function glnbSearch() {
+    const query = document.getElementById("all-search__input").value.trim();
+
+    if (!query) {
+        alert("검색어를 입력해주세요.");
+        return;
+    }
+
+    // 현재 창에서 검색 결과 화면으로 이동
+    const searchUrl = "/portal/assm/assmSrch/srchMst.do?query=" + encodeURIComponent(query);
+    window.location.href = searchUrl;
+}
+
+</script>
+
+
+
+    
+    <input type="hidden" title="hidden" id="assmPopYn" value="Y">
+
+    <!-- skip -->
+    <div class="skip"> 
+        <a href="#containers">본문내용 바로가기</a> 
+    </div>
+    <!-- //skip -->
+    
+    <!-- mobile gnb -->
+    
+    <div class="mobile_gnb">
+        <strong>전체메뉴</strong>
+        <div class="m_logo">
+            <a href="/portal/assm/assmMemb/member.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY">
+            <h1>국회의원</h1>
+            <span class="m_slogan">내일을 여는 국민의 국회</span>
+            </a>
+        </div>
+        <div class="layer_sns_m on">
+            <ul>
+                <li><a href="https://www.facebook.com/NationalAssemblyROK" target="new" class="icon_glnb_facebook on" title="새창열림_페이스북">페이스북</a></li>
+                <li><a href="https://www.youtube.com/channel/UCsWa6xl7KxOolVhROUJ4Ghw" target="new" class="icon_glnb_youtube on" title="새창열림_유투브">유투브</a></li>
+                <li><a href="https://twitter.com/news_NA" target="new" class="icon_glnb_twitter on" title="새창열림_X">X</a></li>
+                <li><a href="https://www.instagram.com/theassembly_kr/" target="new" class="icon_glnb_insta on" title="새창열림_인스타그램">인스타그램</a></li>
+                <li><a href="/portal/rss/rss/searchRss.do?menuNo=600251" target="new" class="icon_glnb_rss on" title="새창열림_RSS">RSS</a></li>
+            </ul>
+        </div>
+        
+        <div class="mobile_gnb_inner">
+            <div class="mobile_gnb_menu">
+                <div>
+                    <a href="/portal/assm/assmMemb/memberProfile.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY">의원소개</a>
+                    <a href="/portal/assm/assmPrpl/prplMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY">의정활동</a>
+                    
+                    <a href="/portal/assm/assmRpt/rptMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY">정책개발활동</a>
+                    <a href="/portal/assm/assmSchd/schdMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY">회의 일정</a>
+                    <a href="/portal/assm/assmNtfy/ntfyMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY">의원실알림</a>
+                </div>
+            </div>
+            <div class="mobile_gnb_btn on">
+                <ul>
+                    <li><a href="/portal/main/main.do" target="new" title="새창열림" class="on">국회홈페이지</a></li>
+                </ul>
+            </div>
+        </div>
+        <a href="javascript:;" class="btn_m_x">닫기</a>
+    </div>
+    <!-- //mobile gnb -->
+    <!-- GNB -->
+    <div class="gnb">
+        <div>
+            <ul class="gnb_assembly">
+                <li class="ga00"><a href="https://www.assembly.go.kr/portal/na/agenda/agendaSchl.do?menuNo=600015" target="_blank" title="새창열림">제22대 제432회국회(임시회) </a></li>
+                <li class="ga01"><a href="https://open.assembly.go.kr/portal/assm/search/memberHistSchPage.do" target="_blank" title="새창열림">역대국회의원</a></li>
+                <li class="ga02"><a href="javascript:;" onclick="memberSchChartPop()" title="새창열림">국회의원통계</a></li>
+                     
+            </ul>
+            <div class="gnb_util">
+                <ul class="gnb_menu">
+                    
+                    
+                    
+                    
+                    <li class="m_none"><a href="/portal/assm/assmMemb/member.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY">Home</a></li>
+                    <li><a href="/portal/main/main.do" target="new" title="새창열림">국회홈페이지</a></li>
+                    <li class="m_none">
+                        <div>
+                            <strong>화면크기</strong>
+                            <a href="javascript:;" class="gnb_plus" onclick="zoomOut()">화면확대</a>
+                            <a href="javascript:;" class="gnb_minus" onclick="zoomIn()">화면축소</a>
+                        </div>
+                    </li>
+                    <li class="m_none">
+                        <ol class="glnb_nsns_icon">
+                            <li><a class="icon_glnb_facebook" id="link_glnb_facebook" href="javascript:void(0);" title="새창열림_페이스북">페이스북</a></li>
+                            <li><a class="icon_glnb_youtube" id="link_glnb_youtube" href="javascript:void(0);" title="새창열림_유튜브">유튜브</a></li>
+                            <li><a class="icon_glnb_twitter" id="link_glnb_twitter" href="javascript:void(0);" title="새창열림_X">X</a></li>
+                            <li><a class="icon_glnb_insta" id="link_glnb_insta" href="javascript:void(0);" title="새창열림_인스타그램">인스타그램</a></li>
+                            <li><a class="icon_glnb_rss" id="link_glnb_rss" href="javascript:void(0);" title="새창열림_RSS">RSS</a></li>
+                        </ol>
+                    </li>
+                </ul>
+                <!-- <div class="gnb_sns">
+                    <a href="javascript:;" id="gnb_sns">국회SNS</a>
+                    <div class="gnb_sns_link">
+                        <ul>
+                            <li><a class="icon_glnb_facebook" id="link_glnb_facebook" href="javascript:void(0);"  title="새창열림_페이스북">페이스북</a></li>
+                            <li><a class="icon_glnb_youtube" id="link_glnb_youtube" href="javascript:void(0);"  title="새창열림_유튜브">유튜브</a></li>
+                            <li><a class="icon_glnb_twitter" id="link_glnb_twitter" href="javascript:void(0);"  title="새창열림_트위터">트위터</a></li>
+                            <li><a class="icon_glnb_insta" id="link_glnb_insta" href="javascript:void(0);"  title="새창열림_인스타그램">인스타그램</a></li>
+                            <li><a class="icon_glnb_rss" id="link_glnb_rss" href="javascript:void(0);"  title="새창열림_RSS">RSS</a></li>
+                        </ul>
+                    </div>
+                </div> -->
+            </div>
+        </div>
+    </div>
+    <!-- //GNB -->
+    
+    <!-- LNB -->
+<div class="lnb">
+    <div class="logoarea">
+        <h1 class="logo">
+            <a href="/portal/assm/assmMemb/member.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY">
+                
+                    
+                    
+                        <span class="img">국회의원</span>
+                        <span>강경숙</span>
+                    
+                
+
+            </a>
+        </h1>
+    </div>
+    <div class="menu-container">
+    <div class="menu">
+        <ul>
+            
+            <li><a href="/portal/assm/assmMemb/memberProfile.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY">의원소개</a></li>
+            <li><a href="/portal/assm/assmPrpl/prplMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY">의정활동</a></li>
+            
+            <li><a href="/portal/assm/assmRpt/rptMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY">정책개발활동</a></li>
+            <li><a href="/portal/assm/assmSchd/schdMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY">회의 일정</a></li>
+            <li><a href="/portal/assm/assmNtfy/ntfyMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY">의원실알림</a></li>
+        </ul>
+    </div>
+	</div>
+	  
+	
+	 <ul class="lnb_util">
+		<li class="li_search">
+		    <div class="header_search_wrap">
+		        <div class="header_searchbar">
+		            <form method="get" action="/portal/assm/assmSrch/allSrchMst.do" class="search-form" id="glnbSearchForm2">
+		                <input type="hidden" name="menuNo" value="600000">
+		                <input type="hidden" name="collection" value="ALL">
+		                <input type="hidden" name="monaCd" value="T2T8225E">
+		                <input type="hidden" name="st" value="22">
+		                <input type="hidden" name="viewType" value="CONTBODY">
+		                <input type="hidden" name="pageIndex" value="1">
+		                <input type="hidden" name="colTab" value="ALLTab">
+		
+		                <div class="search-box_wrap">
+		                    <div class="search-box">
+		                        <input type="text" name="query" id="all-search__input2" class="search-input" autocomplete="off" title="검색어 입력" placeholder="검색어를 입력하세요" value="">
+		
+		                        <button type="submit" class="btn-search">검색</button>
+		                    </div>
+		                </div>
+		            </form>
+		        </div>
+		
+		    </div>
+		</li>
+        <li>
+            <a href="javascript:;" class="lnb_list m_none" id="lnb_list">전체메뉴</a>
+            <a href="javascript:;" id="m_menu_open" class="lnb_list m_block">전체메뉴</a>
+        </li>
+    </ul>
+</div>
+
+<!-- 전체메뉴 -->
+<div class="assembly_man_allmenu">
+    <div class="assm_inner">
+	    <div>
+		    <div class="assembly_man_box">
+		        <h2>의원소개</h2>
+			    <ul>
+			       <li><a href="/portal/assm/assmMemb/memberProfile.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=P01">약력</a></li>
+			       <li><a href="/portal/assm/assmMemb/memberProfile.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=P10">국회의원 이력</a></li>
+			       <li><a href="/portal/assm/assmMemb/memberProfile.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=P13">위원회 경력</a></li>
+			       <li><a href="/portal/assm/assmMemb/memberProfile.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=sns">SNS</a></li>
+			    </ul>
+		    </div>
+		    <div class="assembly_man_box">
+		        <h2>의정활동</h2>
+			    <ul>
+			       <li><a href="/portal/assm/assmPrpl/prplMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=repbill">대표발의법률안</a></li>
+			       <li><a href="/portal/assm/assmPrpl/prplMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=collabill">공동발의법률안</a></li>
+			       <li><a href="/portal/assm/assmPrpl/prplMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=vote">본회의 표결정보</a></li>
+			       <li><a href="/portal/assm/assmPrpl/prplMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=confer">회의록</a></li>
+			       <li><a href="/portal/assm/assmPrpl/prplMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=mbook">영상회의록</a></li>
+			       <li><a href="/portal/assm/assmPrpl/prplMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=pett">청원현황</a></li>
+			       <li><a href="/portal/assm/assmPrpl/prplMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=asemr">의정보고서</a></li>
+			       
+			    </ul>
+		    </div>
+		    <div class="assembly_man_box amb03">
+		        <h2>정책개발활동</h2>
+			    <ul>
+
+			       <li><a href="/portal/assm/assmRpt/rptMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=video">정책세미나 영상</a></li>
+			       <li><a href="/portal/assm/assmRpt/rptMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=polcd">정책세미나 자료</a></li>
+
+			       <li><a href="/portal/assm/assmRpt/rptMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=reshr">연구용역 결과보고서</a></li>
+			   	   <li><a href="/portal/assm/assmRpt/rptMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=study">연구단체 활동내역</a></li>
+			       <li><a href="/portal/assm/assmRpt/rptMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=oreport">연구단체 활동보고서</a></li>
+			       <li><a href="/portal/assm/assmRpt/rptMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=disccs">토론회 개최내역</a></li>
+			    </ul>
+		    </div>
+		    <div class="assembly_man_box">
+		        <h2>회의일정</h2>
+			    <ul>
+			       <li><a href="/portal/assm/assmSchd/schdMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=assem">본회의 의사일정</a></li>
+			       <li><a href="/portal/assm/assmSchd/schdMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=cmmit">위원회 의사일정</a></li>
+			    </ul>
+		    </div>
+		    <div class="assembly_man_box">
+		        <h2>의원실 알림</h2>
+			    <ul>
+			       <li><a href="/portal/assm/assmNtfy/ntfyMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=event">의원실 행사</a></li>
+			       <li><a href="/portal/assm/assmNtfy/ntfyMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=intv">기자회견</a></li>
+			       <li><a href="/portal/assm/assmNtfy/ntfyMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=adopt">의원실 채용</a></li>
+			       <li><a href="/portal/assm/assmNtfy/ntfyMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=report">보도자료</a></li>
+			       <li><a href="/portal/assm/assmNtfy/ntfyMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=sketch">현장스케치</a></li>
+			       
+			  	   <li><a href="/portal/assm/assmNtfy/ntfyMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=home_magazine">국회보</a></li>
+			    </ul>
+		    </div>
+	    </div>
+	    <a href="javascript:;" class="assembly_man_x">닫기</a>
+    </div>
+    
+</div>   
+<!-- //전체메뉴 -->
+    
+    
+<script type="text/javascript">
+function memberSchChartPop() {
+	var url = 'https://open.assembly.go.kr/portal/assm/chart/memberSchChartPopPage.do';
+	var popupX = (document.body.offsetWidth / 2) - (800 / 2);
+	//&nbsp;만들 팝업창 좌우 크기의 1/2 만큼 보정값으로 빼주었음
+
+	var popupY= (window.screen.height / 2) - (900 / 2);
+	//&nbsp;만들 팝업창 상하 크기의 1/2 만큼 보정값으로 빼주었음 
+	
+	window.open(url, '', 'status=no, height=800, width=600, left='+ popupX + ', top='+ popupY);
+}
+
+var urlPath = window.location.pathname;
+    //urlPath(/portal/.../memberProfile) 중 memeberProfile만 담아서 판단
+    urlPath = urlPath.slice(urlPath.lastIndexOf("/")+1,urlPath.indexOf("."));
+	
+    if(urlPath !== "member"){
+	    $(".menu ul li").find("a[href*="+urlPath+"]").addClass("on");
+	}
+    
+    $("#lnb_list").click(function(){
+        $(".assembly_man_allmenu").show();
+        $(".assembly_man_allmenu .assm_inner").focus();
+        return false;
+    });
+    $(".assembly_man_allmenu .assembly_man_x").click(function(){
+        $(".assembly_man_allmenu").hide();
+        $("#lnb_list").focus();
+        return false;
+    });
+    $(".gnb_sns_link li a").blur(function(){
+    	$(".gnb_sns_link").hide();
+    });
+ 
+	$(function () {
+	    $("#glnbSearchForm2").on("submit", function () {
+	        var userInput = $("#all-search__input2").val().trim();
+	        if (!userInput) {
+	            alert("검색어를 입력하세요.");
+	            $("#all-search__input2").focus();
+	            return false;
+	        }
+	    });
+	});
+</script>
+<!--  container -->
+
+	
+	
+		<!--  현역 국회의원 -->
+		<div class="main-containers" id="containers">
+				
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+			<div class="info_content info_content_st2">
+				<div class="main_content">
+					<div class="info-set">
+						<div class="info-con present">
+                        <span class="img-set">
+                            <span class="img" style="background-image: url('/static/portal/img/openassm/new/68f83caf0c9e4546b1694ead863f45ce.jpg')">
+                                <span class="sr-only">강경숙</span>
+                            </span>
+                        </span>
+							<div class="mamber_name">
+								<span>강경숙(姜景淑)</span>
+							</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+						</div>
+
+
+
+						<div class="member_assem_dang">
+							조국혁신당
+						</div>
+
+						<div class="member_assem_sns">
+							<div class="link">
+								
+									<a href="javascript:void(0);" onclick="openHomepage('https://blog.naver.com/grace6752');" title="새창 열림"><img src="/static/portal/img/ico-blog.png" alt="블로그"></a>
+								
+								
+									<a href="javascript:void(0);" onclick="openHomepage('https://web.facebook.com/grace.kang.165');" title="새창 열림"><img src="/static/portal/img/member_facebook.png" alt="페이스북"></a>
+								
+								
+									<a href="javascript:void(0);" onclick="openHomepage('https://www.instagram.com/grace.kang.165');" title="새창 열림"><img src="/static/portal/img/member_instagram.png" alt="인스타"></a>
+								
+								
+								
+									<a href="javascript:void(0);" onclick="openHomepage('https://www.youtube.com/@강경숙TV');" title="새창 열림"><img src="/static/portal/img/member_youtube.png" alt="유투브"></a>
+								
+							</div>
+						</div>
+
+
+
+
+
+
+
+
+					</div>
+					<div class="detail-set">
+						<div class="detail-view">
+							<div class="member_assem_homelink">
+								<dl>
+									<dt>의원홈페이지</dt>
+									<dd><a href="https://www.assembly.go.kr/members/22nd/KANGKYUNGSOOK" target="_blank">www.assembly.go.kr/members/22nd/KANGKYUNGSOOK</a></dd>
+								</dl>
+							</div>
+							<div class="section_01">
+								<div class="part_l intro">
+									<h2>국회의원 소개</h2>
+									<div class="hyeonIntro">
+										<ul class="list">
+											<li>
+												<dl>
+													<dt>선거구</dt>
+													<dd>비례대표</dd>
+												</dl>
+											</li>
+											<li>
+												<dl>
+													<dt>소속위원회</dt>
+													<dd>교육위원회</dd>
+												</dl>
+											</li>
+											<li>
+												<dl>
+													<dt>당선횟수</dt>
+													<dd>
+														<p class="frtodate_ptitle">
+															초선(제22대)
+														</p>
+														
+															
+														
+															
+																
+																<p class="frtodate_p"><span class="date_01">2024.05.30 ~ 
+</span> <span class="date_02">제22대
+ 국회의원</span></p>
+															
+														
+															
+														
+													</dd>
+												</dl>
+											</li>
+											<li>
+												<dl>
+													<dt>사무실 전화</dt>
+													<dd>02-784-5601</dd>
+												</dl>
+											</li>
+											<li>
+												<dl>
+													<dt>사무실 호실</dt>
+													<dd>의원회관 515호</dd>
+												</dl>
+											</li>
+
+												
+
+
+
+
+
+
+											<li>
+												<dl>
+													<dt>개별 홈페이지</dt>
+													<dd><a href="https://blog.naver.com/grace6752" target="_blank">https://blog.naver.com/grace6752</a></dd>
+												</dl>
+											</li>
+											<li>
+												<dl>
+													<dt>이메일</dt>
+													<dd>gracesook52@rebuildingk.kr</dd>
+												</dl>
+											</li>
+											<li>
+												<dl>
+													<dt>보좌관</dt>
+													<dd>
+														
+															
+															
+															
+																김재삼, 서용선
+															
+														
+													</dd>
+												</dl>
+											</li>
+											<li>
+												<dl>
+													<dt>선임비서관</dt>
+													<dd>김홍, 오세령</dd>
+												</dl>
+											</li>
+											<li>
+												<dl>
+													<dt>비서관</dt>
+													<dd>박문혁, 김예닮, 이경열, 김희경, 공병준</dd>
+												</dl>
+											</li>
+											<li>
+												<dl>
+													<dt>의원실 안내</dt>
+													<dd>
+</dd>
+												</dl>
+											</li>
+												
+											
+										</ul>
+									</div>
+								</div>
+								<div class="part_r report">
+									<h2>주요약력</h2>
+									<div class="mCustomScrollbar h390 hyeonReport _mCS_1 mCS_no_scrollbar" style="height: 301px;"><div id="mCSB_1" class="mCustomScrollBox mCS-rounded-dark mCSB_vertical mCSB_inside" style="max-height: none;" tabindex="0"><div id="mCSB_1_container" class="mCSB_container mCS_y_hidden mCS_no_scrollbar_y" style="position:relative; top:0; left:0;" dir="ltr">
+										<ul class="list">
+											
+												
+											
+												
+											
+												
+													<pre>2024.5~ 제22대 국회의원 (비례대표/조국혁신당)
+2021.2~2023.2 장애인정책조정위원회 위원
+2021 대통령직속 국가균형발전위원회 위원
+2017.12~2018 대통령직속 국가교육회의 위원
+2013.7~2014.7 미국 워싱턴대학교 특수교육과 연구교수
+~2012.3 원광대학교 입학기획부처장
+2011.1 원광대학교 입학사정관실장
+2007.4~ 원광대학교 중등특수교육과 교수
+2000.3~2007.3 교육부 국립특수교육원 교육연구사
+1993.3~2000.2 은평초등학교 특수교육 교사
+1991.4~1992.8 세이브더칠드런 해외사업부
+</pre>
+												
+											
+										</ul>
+									</div><div id="mCSB_1_scrollbar_vertical" class="mCSB_scrollTools mCSB_1_scrollbar mCS-rounded-dark mCSB_scrollTools_vertical" style="display: none;"><div class="mCSB_draggerContainer"><div id="mCSB_1_dragger_vertical" class="mCSB_dragger" style="position: absolute; min-height: 14px; top: 0px;"><div class="mCSB_dragger_bar"></div></div><div class="mCSB_draggerRail"></div></div></div></div></div>
+								</div>
+							</div>
+							<!-- //section_01 -->
+
+
+							<!-- //section_02 -->
+
+								
+						</div>
+						<!-- //detail-view -->
+					</div>
+					<!-- //detail-set -->
+				</div>
+
+					
+					
+				<!-- //의원실 안내 추가 -->
+			</div>
+
+			<div class="main_content">
+				<div class="etc">
+					<ul>
+						<li>
+							<a href="/portal/assm/assmPrpl/prplMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=repbill" title="대표발의 의안으로 이동">
+								<span>대표발의 의안</span>
+							</a>
+						</li>
+						<li>
+							<a href="/portal/assm/assmPrpl/prplMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=collabill" title="공동발의 의안으로 이동">
+								<span>공동발의 의안</span>
+							</a>
+						</li>
+						<li>
+							<a href="/portal/assm/assmPrpl/prplMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=vote" title="본회의 표결정보로 이동">
+								<span>본회의 표결정보</span>
+							</a>
+						</li>
+						<li>
+							<a href="/portal/assm/assmPrpl/prplMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=mbook" title="영상 회의록으로 이동">
+								<span>영상 회의록</span>
+							</a>
+						</li>
+						<li>
+							<a href="/portal/assm/assmRpt/rptMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=report" title="정책 세미나로 이동">
+								<span>정책 세미나</span>
+							</a>
+						</li>
+					</ul>
+				</div>
+			</div>
+
+			<!-- 보도자료, 대표발의 법률안 -->
+			<div class="main_content">
+				<div class="notice-set">
+					<h2 class="sr-only">최근 게시물</h2>
+					<div class="notice">
+						<h3>대표발의 의안</h3>
+						<ul id="sumry_cont__lgslt_rep__list">
+							
+								
+									
+										<li>
+											<a href="http://likms.assembly.go.kr/bill/billDetail.do?billId=PRC_G2H6O0P1O1M9M1L5L5T7T1S0T6R7P8&amp;ageFrom=22&amp;ageTo=22" target="_blank">
+                                        <span class="txt-set">
+                                            <span class="tit">헌법재판소법 일부개정법률안</span>
+                                            <span class="txt">2026-01-20</span>
+                                        </span>
+												<span class="type"></span>
+											</a>
+										</li>
+									
+										<li>
+											<a href="http://likms.assembly.go.kr/bill/billDetail.do?billId=PRC_P2N5O1V2W2U9V1T7U0S8H2I3G0H3F8&amp;ageFrom=22&amp;ageTo=22" target="_blank">
+                                        <span class="txt-set">
+                                            <span class="tit">초·중등교육법 일부개정법률안</span>
+                                            <span class="txt">2026-01-06</span>
+                                        </span>
+												<span class="type"></span>
+											</a>
+										</li>
+									
+										<li>
+											<a href="http://likms.assembly.go.kr/bill/billDetail.do?billId=PRC_S2T5R1Q2Q2Y9Z1X7X0W7X5V2V4D5C1&amp;ageFrom=22&amp;ageTo=22" target="_blank">
+                                        <span class="txt-set">
+                                            <span class="tit">보호소년 등의 처우에 관한 법률 일부개정법률안</span>
+                                            <span class="txt">2026-01-06</span>
+                                        </span>
+												<span class="type"></span>
+											</a>
+										</li>
+									
+								
+								
+							
+						</ul>
+						<p class="more"><a title="대표발의 의안 더보기" href="/portal/assm/assmPrpl/prplMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=repbill">더보기</a></p>
+					</div>
+					<div class="notice">
+						<h3>발언 영상</h3>
+						<ul>
+							
+								
+									
+										<li style="padding: 16px 0">
+											<a href="http://w3.assembly.go.kr/vod/main/player.do?menu=1&amp;mc=358&amp;ct1=22&amp;ct2=429&amp;ct3=11&amp;no=651434" target="_blank">
+                                        <span class="txt-set">
+                                            <span class="tit">제429회 국회(정기회) 제11차 교육위원회</span>
+                                            <span class="txt2">2025-12-09</span>
+                                            <span class="txt_time">00:05:34</span>
+                                        </span>
+											</a>
+										</li>
+									
+										<li style="padding: 16px 0">
+											<a href="http://w3.assembly.go.kr/vod/main/player.do?menu=1&amp;mc=358&amp;ct1=22&amp;ct2=429&amp;ct3=07&amp;no=649536" target="_blank">
+                                        <span class="txt-set">
+                                            <span class="tit">제429회 국회(정기회) 제07차 교육위원회</span>
+                                            <span class="txt2">2025-11-11</span>
+                                            <span class="txt_time">00:05:10</span>
+                                        </span>
+											</a>
+										</li>
+									
+										<li style="padding: 16px 0">
+											<a href="http://w3.assembly.go.kr/vod/main/player.do?menu=1&amp;mc=358&amp;ct1=22&amp;ct2=429&amp;ct3=A5&amp;no=647674" target="_blank">
+                                        <span class="txt-set">
+                                            <span class="tit">2025년도 국정감사(교육부 등)</span>
+                                            <span class="txt2">2025-10-30</span>
+                                            <span class="txt_time">00:09:47</span>
+                                        </span>
+											</a>
+										</li>
+									
+								
+								
+							
+
+						</ul>
+						<p class="more"><a title="발언 영상 더보기" href="/portal/assm/assmPrpl/prplMst.do?monaCd=T2T8225E&amp;st=22&amp;viewType=CONTBODY&amp;tabId=mbook"><span>더보기</span></a></p>
+					</div>
+				</div>
+			</div>
+		</div>
+		<!--  //현역 국회의원 -->
+	
+
+
+
+
+
+
+
+
+<form name="frm" id="frm">
+    <input type="hidden" title="hidden" id="hdn_openNaId" name="openNaId" value="KANGKYUNGSOOK">
+    <input type="hidden" title="hidden" id="hdn_st" name="st" value="22">
+    <input type="hidden" title="hidden" id="hdn_monaCd" name="monaCd" value="T2T8225E">
+    <input type="hidden" title="hidden" id="hdn_tabId" value="">
+</form>
+
+
+
+
+
+
+
+
+
+<!-- footer -->
+<div class="footer">
+    <footer>
+        <div class="logo_footer">
+            <img src="/static/portal/img/logo.png" alt="대한민국 국회">
+        </div>
+        <div class="footer_menu">
+
+            <ul id="ft_menu">
+                <li><a href="javascript:;" id="footer_indvdl_prcs_polcy" class="">개인정보 처리방침</a></li>
+                <li><a href="javascript:;" id="footer_indvdl_file_list" class="line">개인정보 파일목록</a></li>
+                <li><a href="javascript:;" id="footer_hmpg_use_stplat" class="line">이용약관</a></li>
+                <li><a href="javascript:;" id="footer_cpyrht_policy" class="line">저작권 정책</a></li>
+                <li><a href="javascript:;" id="footer_directions" class="line">찾아오시는 길</a></li>
+            </ul>
+
+            <address>
+                <span>서울특별시 영등포구 의사당대로 1 (여의도동) 07233</span>
+                <span class="f_bullet">대표전화 : 02-6788-2114</span>
+                <span class="f_bullet">홈페이지 문의 : <a href="mailto:webmaster@assembly.go.kr" class="mailto">webmaster@assembly.go.kr</a></span>
+            </address>
+            <div class="copyright">Copyrightⓒ National Assembly. All rights reserved. <br>대한민국국회 홈페이지의 모든 정보에 대한 권한은 국회에 있습니다.</div>
+
+            <ul class="foot_homepage">
+                <li>
+                    <select id="footer_jrsd_hmpg_cd" title="소관기관 홈페이지 선택" name="footer_jrsd_hmpg_cd"><option value="">소관기관 홈페이지</option><option value="https://nas.na.go.kr">국회사무처</option><option value="https://www.nanet.go.kr">국회도서관</option><option value="https://www.nabo.go.kr">국회예산정책처</option><option value="https://www.nars.go.kr">국회입법조사처</option><option value="https://archives.nanet.go.kr/main.do">국회기록원</option><option value="https://www.nafi.re.kr/new/index.do">국회미래연구원</option></select>
+                    <button class="btn_bl" id="btn_jrsd_hmpg_cd" title="새창열림">GO</button>
+                </li>
+                <li>
+                    <select id="footer_cmmit_hmpg_cd" title="위원회 홈페이지 선택" name="footer_cmmit_hmpg_cd"><option value="">위원회 홈페이지</option><option value="https://committee.na.go.kr">국회상임위원회 및 특별위원회</option><option value="https://steering.na.go.kr">국회운영위원회</option><option value="https://legislation.na.go.kr">법제사법위원회</option><option value="https://policy.na.go.kr">정무위원회</option><option value="https://finance.na.go.kr">재정경제기획위원회</option><option value="https://edu.na.go.kr">교육위원회</option><option value="https://science.na.go.kr">과학기술정보방송통신위원회</option><option value="https://uft.na.go.kr">외교통일위원회</option><option value="https://defense.na.go.kr">국방위원회</option><option value="https://adminhom.na.go.kr">행정안전위원회</option><option value="https://cst.na.go.kr">문화체육관광위원회</option><option value="https://agri.na.go.kr">농림축산식품해양수산위원회</option><option value="https://industry.na.go.kr">산업통상자원중소벤처기업위원회</option><option value="https://health.na.go.kr">보건복지위원회</option><option value="https://environment.na.go.kr">기후에너지환경노동위원회</option><option value="https://ltc.na.go.kr">국토교통위원회</option><option value="https://intelligence.na.go.kr">정보위원회</option><option value="https://women.na.go.kr">성평등가족위원회</option><option value="https://budget.na.go.kr">예산결산특별위원회</option><option value="https://spc.na.go.kr">특별위원회</option></select>
+                    <button class="btn_bl" id="btn_cmmit_hmpg_cd" title="새창열림">GO</button>
+                </li>
+                <li>
+                    <select id="footer_hmpg_cd" title="홈페이지 선택" name="footer_hmpg_cd"><option value="">홈페이지</option><option value="https://www.naon.go.kr">국회뉴스ON</option><option value="https://www.natv.go.kr">국회방송</option><option value="http://assembly.webcast.go.kr">인터넷의사중계</option><option value="https://museum.assembly.go.kr/">국회박물관</option><option value="https://training.assembly.go.kr">국회의정연수원</option><option value="https://vplatform.assembly.go.kr/">정책영상플랫폼</option></select>
+                    <button class="btn_bl" id="btn_hmpg_cd" title="새창열림">GO</button>
+                </li>
+                <li>
+                    <select id="footer_na_info_sys_cd" title="국회정보시스템 선택" name="footer_na_info_sys_cd"><option value="">국회정보시스템</option><option value="https://open.assembly.go.kr">열린국회정보</option><option value="https://petitions.assembly.go.kr/paHome">국민동의청원</option><option value="https://likms.assembly.go.kr/bill/main.do">의안정보시스템</option><option value="http://w3.assembly.go.kr/vod">영상회의록</option><option value="https://record.assembly.go.kr/">회의록시스템</option><option value="https://pal.assembly.go.kr">국회입법예고</option><option value="https://likms.assembly.go.kr/law">국회법률정보시스템</option><option value="https://likms.assembly.go.kr/inspections/main.do">국정감사정보시스템</option><option value="https://open.assembly.go.kr:442/admjud/guideAdmjud.do">행정심판시스템</option><option value="https://gosi.assembly.go.kr">국회채용시스템</option></select>
+                    <button class="btn_bl" id="btn_na_info_sys_cd" title="새창열림">GO</button>
+                </li>
+            </ul>
+
+            <div class="ft_menu_etc">
+                <ul>
+                    <li><a href="javascript:void(0);" id="footer_web_acces" class="wa" title="새창열림_한국웹접근성인증평가원">웹접근성인증마크</a></li>
+                    <li><a href="javascript:void(0);" id="footer_kogl" class="site_open" title="새창열림_공공누리">OPEN</a></li>
+                    <li><a class="fsns_rss" id="link_glnb_footer_rss" href="javascript:void(0);" title="새창열림_RSS">RSS</a></li>
+                </ul>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Quick Menu -->
+    
+
+    
+</div>
+<!-- //footer -->
+
+<!-- mobile quick menu --
+<div class="mobile_quickmenu">
+    <div class="mobile_quickmenu_box">
+        <div>
+            <strong>Quick 메뉴</strong>
+            <ul>
+                <li><a class="mq00" href="https://constitution.assembly.go.kr" target="new">헌정포털</a></li>
+                <li><a class="mq01" href="https://assembly.webcast.go.kr/main" target="new">인터넷 의사중계</a></li>
+                
+                <li><a class="mq03" href="https://likms.assembly.go.kr/bill/main.do" target="new">의안정보</a></li>
+                <li><a class="mq04" href="https://likms.assembly.go.kr/law" target="new">법률정보</a></li>
+                <li><a class="mq05" href="https://likms.assembly.go.kr/record" target="new">회의록</a></li>
+                <li><a class="mq06" href="https://petitions.assembly.go.kr" target="new">국민동의청원</a></li>
+                <li><a class="mq07" href="https://pal.assembly.go.kr" target="new">입법예고</a></li>
+                <li><a class="mq08" href="https://open.assembly.go.kr" target="new">열린국회정보</a></li>
+            </ul>
+        </div>
+    </div>
+    <a href="#" class="mobile_quick_x">닫기</a>
+</div>
+-- mobile quick menu -->
+
+
+
+
+<form id="hdn_download_form" name="hdn_download_form" method="post" target="hdn_download_iframe"></form>
+<iframe id="hdn_download_iframe" name="hdn_download_iframe" title="hdn_download_iframe" style="display: none;"></iframe>
+
+
+
+
+
+
+
+
+<!-- 로그기록  -->
+<!-- 
+<script>
+document.writeln("<span class='sr-only'><img src='//singl/siteConectStats/rcord.do?menuNo=&amp;conectUrlad=' alt=''></span>");
+</script> -->
+<!-- 로그기록 END  -->
+<div class="loading" id="loadingDiv" style="display:none;">
+    <div class="spinner">
+      <div class="bounce1"></div>
+      <div class="bounce2"></div>
+      <div class="bounce3"></div>
+    </div>
+
+    <p> <br>게시물 저장 중입니다.</p>
+</div>
+
+<!-- loading... -->
+<div class="loading_bar" id="glb-ifm-loading-sect" style="display: none;">
+    <div class="progress_bar">
+        <div>
+            <div class="progress">
+                <div class="bar"></div>
+            </div>
+            <span class="progress_txt">잠시만 기다려주십시오.<em>Wait a minute</em></span>
+        </div>
+    </div>
+</div>
+<!-- //loading... -->
+
+<script src="/static/jslibrary/tablesummary.js"></script>
+
+<!-- 서비스&API -->
+<div class="modal_pop" id="footer__srvmApi_layer" style="display:none;">
+    
+    <div class="poplayer_footer open_api" id="footer__srvmApi_sect"></div>
+</div>
+<!-- //서비스&API -->
+
+<script src="/static/portal/js/main/inc/footer.js?ver=0.250808"></script>
+
+
+<script src="/static/portal/js/main/sub/excelCountCheck.js"></script>
+<div class="npop_download" style="display: none;">
+    <div>
+        <div>
+            <span></span>
+            <ul>
+                <li><a href="javascript:void(0);" class="btn_bk">다운로드</a></li>
+                <li><a href="javascript:void(0);" class="btn_bl">취소</a></li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+
+<script>
+    $(function(){
+        fn_scroll_plugin();
+
+		/* 더보기 */
+		$(".more_view").click(function(){
+			var classNm = $(this).attr("class");
+			var monaCd = 'T2T8225E';
+			var st = '22';
+			var url = '';
+
+			if(classNm.includes("membCmtList")){       //위원회경력
+				url = '/portal/assm/assmMemb/memberProfile.do?monaCd='+monaCd+'&st='+st+'&viewType=CONTBODY&tabId=P13';
+			}else if(classNm.includes("membAsemr")){   //의정보고서
+				url = '/portal/assm/assmRpt/rptMst.do?monaCd='+monaCd+'&st='+st+'&viewType=CONTBODY&tabId=asemr';
+			}else if(classNm.includes("membRepbill")){ //대표발의안
+				url = '/portal/assm/assmPrpl/prplMst.do?monaCd='+monaCd+'&st='+st+'&viewType=CONTBODY&tabId=repbill';
+			}else if(classNm.includes("membMbook")) {  //발언영상 - 영상회의록
+				url = '/portal/assm/assmPrpl/prplMst.do?monaCd='+monaCd+'&st='+st+'&viewType=CONTBODY&tabId=mbook';
+			}
+
+			location.href = url;
+		});
+
+		/* 현역 주요약력 소개높이 맞추기 */
+		$(".hyeonReport").height($(".hyeonIntro").height());
+    });
+
+    function fn_scroll_plugin() {
+        $(".mCustomScrollbar").mCustomScrollbar({
+            theme:"rounded-dark"
+        });
+    }
+</script>
+</body></html>

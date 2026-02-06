@@ -51,6 +51,35 @@ class GraphStorage:
                             action TEXT,
                             details TEXT
                         );
+                        CREATE TABLE IF NOT EXISTS public.politician_sns_hotness (
+                            id SERIAL PRIMARY KEY,
+                            member_name TEXT,
+                            platform TEXT,
+                            author_type TEXT,
+                            post_id TEXT,
+                            content_preview TEXT,
+                            engagement_data JSONB,
+                            hot_score FLOAT,
+                            sentiment_score FLOAT,
+                            collected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            UNIQUE (member_name, platform, post_id)
+                        );
+                        CREATE TABLE IF NOT EXISTS public.politician_hotness_summary (
+                            member_name TEXT PRIMARY KEY,
+                            current_hot_score FLOAT,
+                            cumulative_hot_score FLOAT DEFAULT 0,
+                            top_platform TEXT,
+                            daily_change FLOAT DEFAULT 0,
+                            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                        CREATE TABLE IF NOT EXISTS system_settings (
+                            key TEXT PRIMARY KEY,
+                            value TEXT,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                        -- 초기 데이터 설정
+                        INSERT INTO system_settings (key, value) VALUES ('last_data_update', CURRENT_DATE::TEXT)
+                        ON CONFLICT (key) DO NOTHING;
                     """)
                 conn.commit()
             logger.info("TuringDB persistence tables ready.")
@@ -69,7 +98,8 @@ class GraphStorage:
                     for r in rows:
                         self.nodes[r[0]] = {"id": r[0], "labels": r[1], "properties": r[2]}
                         for label in r[1]:
-                            self.node_index[label].append(r[0])
+                            if r[0] not in self.node_index[label]:
+                                self.node_index[label].append(r[0])
                     logger.info(f"Loaded {len(self.nodes)} nodes from DB.")
 
                     # Load Edges
@@ -291,11 +321,40 @@ class GraphStorage:
             "relationships": edges
         }
     
+    def get_setting(self, key: str, default: Any = None) -> Any:
+        """시스템 설정 조회"""
+        if not self.db_config: return default
+        try:
+            with psycopg2.connect(**self.db_config) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT value FROM system_settings WHERE key = %s", (key,))
+                    row = cur.fetchone()
+                    return row[0] if row else default
+        except Exception as e:
+            logger.error(f"Failed to get setting {key}: {e}")
+            return default
+
+    def set_setting(self, key: str, value: str):
+        """시스템 설정 저장"""
+        if not self.db_config: return
+        try:
+            with psycopg2.connect(**self.db_config) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO system_settings (key, value, updated_at) 
+                        VALUES (%s, %s, CURRENT_TIMESTAMP)
+                        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
+                    """, (key, value))
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Failed to set setting {key}: {e}")
+
     def get_statistics(self) -> Dict[str, Any]:
         """통계 정보"""
         stats = {
             "total_nodes": len(self.nodes),
             "total_edges": len(self.edges),
+            "last_updated": self.get_setting("last_data_update", "2026-02-02"),
             "nodes_by_label": {},
             "edges_by_type": defaultdict(int)
         }

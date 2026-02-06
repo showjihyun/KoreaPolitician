@@ -31,12 +31,17 @@ logger = logging.getLogger(__name__)
 # assembly_members_complete.json에서 국회의원 이름 전체를 읽어 POLITICIANS 리스트 생성
 POLITICIANS = []
 try:
-    with open(os.path.join(os.path.dirname(__file__), '../../data/assembly_members_complete.json'), 'r', encoding='utf-8') as f:
+    # 프로젝트 루트 기준 경로
+    member_path = 'data/assembly_members_complete.json'
+    if not os.path.exists(member_path):
+        member_path = 'assembly_members_complete.json'
+        
+    with open(member_path, 'r', encoding='utf-8') as f:
         members = json.load(f)
         POLITICIANS = [m['name'] for m in members if m.get('name')]
     logger.info(f"총 {len(POLITICIANS)}명의 국회의원 이름을 POLITICIANS에 로드했습니다.")
 except Exception as e:
-    logger.warning(f"assembly_members_complete.json에서 국회의원 이름 로드 실패: {e}")
+    logger.warning(f"국회의원 이름 로드 실패: {e}")
     POLITICIANS = []
 
 # Initialize Core Services
@@ -318,33 +323,47 @@ def crawl_naver_section(sid1, sid2, max_pages=3):
 
 def crawl_naver_news_search(keyword, max_articles=10):
     articles = []
-    # sort=1 (최신순), pd=3 (기간 설정), ds/de (날짜 범위: 1년)
     end_date = datetime.now()
     start_date = end_date - timedelta(days=365)
     ds = start_date.strftime("%Y.%m.%d")
     de = end_date.strftime("%Y.%m.%d")
     
-    search_url = f"https://search.naver.com/search.naver?where=news&query={requests.utils.quote(keyword)}&sort=1&pd=3&ds={ds}&de={de}"
-    
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         page = context.new_page()
-        try:
-            page.goto(search_url, timeout=30000)
-            page.wait_for_selector(".list_news, .news_list", timeout=15000)
-            items = page.query_selector_all("li.bx, div.news_area")
-            for item in items:
-                title_el = item.query_selector("a.news_tit, a.tit")
-                if not title_el: continue
-                title = title_el.inner_text().strip()
-                url = title_el.get_attribute("href")
-                press = item.query_selector(".info_group .press, .info.press").inner_text().strip() if item.query_selector(".info_group .press, .info.press") else "Naver"
-                if url and title and not any(a['url'] == url for a in articles):
-                    articles.append({"title": title, "url": url, "press": press, "date": datetime.now().strftime("%Y-%m-%d")})
+        
+        # 최대 3페이지까지 검색 수행
+        for page_num in range(3):
+            start_idx = (page_num * 10) + 1
+            search_url = f"https://search.naver.com/search.naver?where=news&query={requests.utils.quote(keyword)}&sort=1&pd=3&ds={ds}&de={de}&start={start_idx}"
+            
+            try:
+                page.goto(search_url, timeout=30000)
+                page.wait_for_selector(".list_news, .news_list", timeout=15000)
+                items = page.query_selector_all("li.bx, div.news_area")
+                
+                if not items: break
+                
+                for item in items:
+                    title_el = item.query_selector("a.news_tit, a.tit")
+                    if not title_el: continue
+                    title = title_el.inner_text().strip()
+                    url = title_el.get_attribute("href")
+                    press = item.query_selector(".info_group .press, .info.press").inner_text().strip() if item.query_selector(".info_group .press, .info.press") else "Naver"
+                    
+                    if url and title and not any(a['url'] == url for a in articles):
+                        articles.append({"title": title, "url": url, "press": press, "date": datetime.now().strftime("%Y-%m-%d")})
+                    
+                    if len(articles) >= max_articles: break
+                
                 if len(articles) >= max_articles: break
-        finally:
-            browser.close()
+                
+            except Exception as e:
+                logger.warning(f"Search crawl failed for {keyword} (page {page_num+1}): {e}")
+                break
+                
+        browser.close()
     return articles
 
 def crawl_cnn_search(keyword, max_articles=3):
@@ -515,12 +534,19 @@ def run_pipeline(db_config):
         for name in target_names:
              futures[collection_executor.submit(collect_all_sources_for_name, name)] = f"Keyword: {name}"
         
+        total_tasks = len(futures)
+        completed_tasks = 0
         for future in as_completed(futures):
+            completed_tasks += 1
+            task_info = futures[future]
             try:
                 res = future.result()
                 if res: news_pool.extend(res)
+                # 10회마다 또는 마지막에 진행률 출력
+                if completed_tasks % 10 == 0 or completed_tasks == total_tasks:
+                    logger.info(f"[{completed_tasks}/{total_tasks}] 뉴스 수집 진행 중... ({task_info})")
             except Exception as e:
-                logger.error(f"Collection error: {e}")
+                logger.error(f"Collection error ({task_info}): {e}")
             
     # 3. 중복 제거
     unique_news = []
@@ -568,11 +594,11 @@ if __name__ == "__main__":
     logger.info(f"=== Autonomous Political Analysis Service v1.0 ===")
     logger.info(f"수집 간격: {INTERVAL_MINUTES}분")
     
-    while True:
+    if True:
         try:
             run_pipeline(db_config)
         except Exception as e:
-            logger.error(f"Pipeline critical error in main loop: {e}")
+            logger.error(f"Pipeline critical error in single run: {e}")
             logger.error(traceback.format_exc())
             
         logger.info(f"Next run in {INTERVAL_MINUTES} minutes...")

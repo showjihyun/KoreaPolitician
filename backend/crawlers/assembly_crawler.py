@@ -63,8 +63,14 @@ class AssemblyCrawlerPlaywright:
                     name_elem = cells[2].select_one("a.hgNm")
                     name = name_elem.get_text(strip=True) if name_elem else ""
                     
+                    import re
+                    onclick = name_elem.get("onclick", "") if name_elem else ""
+                    monaCd_match = re.search(r"memberDetail\('([^']+)'\)", onclick)
+                    monaCd = monaCd_match.group(1) if monaCd_match else ""
+                    
                     info = {
                         "name": name,
+                        "monaCd": monaCd,
                         "rownum": cells[0].get_text(strip=True),  # 번호
                         "unit": cells[1].get_text(strip=True),   # 대수
                         "party": cells[3].get_text(strip=True),  # 정당
@@ -87,7 +93,7 @@ class AssemblyCrawlerPlaywright:
         print("=== 국회의원 정보 수집 시작 (사진보기+목록보기 통합) ===")
         members = []
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False)  # 디버깅을 위해 headless=False
+            browser = p.chromium.launch(headless=True)  # headless=True for server environment
             page = browser.new_page()
             
             # 첫 페이지 접속
@@ -118,39 +124,33 @@ class AssemblyCrawlerPlaywright:
                     print(f"    카드 없음: {page_num}페이지 (종료)")
                     break
                 
-                # 사진보기 탭 HTML 파싱
-                html = page.content()
-                soup = BeautifulSoup(html, "html.parser")
-                cards = soup.select(".nassem_result_ul > li > a.nassem_reslut_pic")
-                print(f"    사진보기: {len(cards)}명 발견")
+                # 사진보기 탭 정보 추출 (JS Evaluate 사용)
+                photo_info = page.evaluate("""() => {
+                    const cards = Array.from(document.querySelectorAll('.nassem_result_ul > li > a.nassem_reslut_pic'));
+                    return cards.map((card, idx) => {
+                        const img = card.querySelector('div > img');
+                        const span = card.querySelector('span');
+                        const i = span?.querySelector('i');
+                        const party = i?.innerText.trim() || '';
+                        const name = span?.innerText.replace(party, '').trim() || '';
+                        const onclick = card.getAttribute('onclick') || '';
+                        const monaCdMatch = onclick.match(/memberDetail\\('([^']+)'\\)/);
+                        const monaCd = monaCdMatch ? monaCdMatch[1] : '';
+                        
+                        return {
+                            name,
+                            party,
+                            photo_url: img?.src || '',
+                            monaCd,
+                            index: idx
+                        };
+                    });
+                }""")
                 
-                if not cards:
-                    print(f"    더 이상 카드 없음, 종료")
-                    break
+                print(f"    사진보기: {len(photo_info)}명 발견")
                 
-                # 사진보기 탭 정보 추출
-                photo_info = []
-                for idx, card in enumerate(cards):
-                    img_elem = card.select_one("div > img")
-                    photo_url = img_elem["src"] if img_elem else ""
-                    
-                    span_elem = card.select_one("span")
-                    party = ""
-                    name = ""
-                    if span_elem:
-                        i_elem = span_elem.select_one("i")
-                        party = i_elem.get_text(strip=True) if i_elem else ""
-                        name = span_elem.get_text(strip=True).replace(party, "").strip()
-                    
-                    photo_filename = self.download_image(photo_url, name)
-                    
-                    photo_info.append({
-                        "name": name,
-                        "party": party,
-                        "photo_url": photo_url,
-                        "photo_filename": photo_filename,
-                        "index": idx
-                    })
+                for p_data in photo_info:
+                    p_data["photo_filename"] = self.download_image(p_data["photo_url"], p_data["name"])
                 
                 # 2. 목록보기 탭에서 추가 정보 수집
                 list_info = self.extract_list_tab_info(page, page_num)
@@ -164,8 +164,8 @@ class AssemblyCrawlerPlaywright:
                             matched_list_data = list_data
                             break
                     
-                    # monaCd, unitCd 계산
-                    monaCd = str((page_num-1)*30 + photo_data["index"] + 1)
+                    # monaCd, unitCd
+                    monaCd = photo_data["monaCd"]
                     unitCd = UNIT_CD
                     
                     # 통합 데이터 생성

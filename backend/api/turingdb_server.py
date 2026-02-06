@@ -10,6 +10,8 @@ import logging
 from collections import deque
 import datetime
 from pydantic import BaseModel
+import psycopg2
+
 
 logging.basicConfig(level=logging.INFO)
 
@@ -71,7 +73,7 @@ async def startup_event():
         logging.info("Data loaded successfully!")
 
 @app.get('/api/graph/all')
-def graph_all(limit: int = 200):
+def graph_all(limit: int = 350):
     """전체 정치인 관계 그래프 조회"""
     members = graph_storage.find_nodes("Member")
     
@@ -82,27 +84,47 @@ def graph_all(limit: int = 200):
     relationships = []
     node_ids = set()
     
+    # Fetch hotness scores for these members
+    hotness_map = {}
+    try:
+        with psycopg2.connect(**graph_storage.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT member_name, current_hot_score, top_platform FROM public.politician_hotness_summary")
+                for r in cur.fetchall():
+                    hotness_map[r[0]] = {"score": r[1], "platform": r[2]}
+    except: pass
+
     for member in limited_members:
-        # 이미지 URL 추가
+        # 이미지 URL 및 화제성 점수 추가
         name = member["properties"].get("name")
+        member_id = member["id"]
+        
         if name:
             member["properties"]["image_url"] = f"/api/images/{name}.jpg"
             member["properties"]["thumbnail_url"] = f"/api/images/{name}.jpg?thumbnail=true"
+            # SNS 화제성 점수 통합
+            hot_info = hotness_map.get(name, {"score": 0, "platform": None})
+            member["properties"]["hot_score"] = hot_info["score"]
+            member["properties"]["hot_platform"] = hot_info["platform"]
         
-        nodes.append(member)
-        node_ids.add(member["id"])
+        if member_id not in node_ids:
+            nodes.append(member)
+            node_ids.add(member_id)
         
         # 각 의원의 관계 추가
-        rels = graph_storage.get_relationships(member["id"], direction="out")
+        rels = graph_storage.get_relationships(member_id, direction="out")
         for rel in rels[:10]:  # 각 의원당 최대 10개 관계
             relationships.append(rel["edge"])
             if rel["node"] and rel["node"]["id"] not in node_ids:
-                # 연결된 노드에도 이미지 URL 추가
+                # 연결된 노드에도 이미지 및 화제성 점수 추가
                 if rel["node"].get("labels") and "Member" in rel["node"]["labels"]:
                     rel_name = rel["node"]["properties"].get("name")
                     if rel_name:
                         rel["node"]["properties"]["image_url"] = f"/api/images/{rel_name}.jpg"
                         rel["node"]["properties"]["thumbnail_url"] = f"/api/images/{rel_name}.jpg?thumbnail=true"
+                        hot_info = hotness_map.get(rel_name, {"score": 0, "platform": None})
+                        rel["node"]["properties"]["hot_score"] = hot_info["score"]
+                        rel["node"]["properties"]["hot_platform"] = hot_info["platform"]
                 nodes.append(rel["node"])
                 node_ids.add(rel["node"]["id"])
     
@@ -128,15 +150,80 @@ def graph(member_name: str, depth: int = Query(2, ge=1, le=5)):
     member_id = members[0]["id"]
     data = graph_storage.get_path(member_id, max_depth=depth)
     
-    # 이미지 URL 추가
+    # Fetch hotness scores for these members
+    hotness_map = {}
+    try:
+        with psycopg2.connect(**graph_storage.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT member_name, current_hot_score, top_platform FROM public.politician_hotness_summary")
+                for r in cur.fetchall():
+                    hotness_map[r[0]] = {"score": r[1], "platform": r[2]}
+    except: pass
+
+    # 이미지 URL 및 화제성 점수 추가
     for node in data["nodes"]:
         if node.get("labels") and "Member" in node["labels"]:
             name = node["properties"].get("name")
             if name:
                 node["properties"]["image_url"] = f"/api/images/{name}.jpg"
                 node["properties"]["thumbnail_url"] = f"/api/images/{name}.jpg?thumbnail=true"
+                hot_info = hotness_map.get(name, {"score": 0, "platform": None})
+                node["properties"]["hot_score"] = hot_info["score"]
+                node["properties"]["hot_platform"] = hot_info["platform"]
     
     return JSONResponse(content=data)
+
+@app.get('/api/sns/hot_posts/{member_name}')
+def sns_hot_posts(member_name: str, limit: int = 5):
+    """특정 의원의 화제가 된 SNS 포스트 수집"""
+    try:
+        with psycopg2.connect(**graph_storage.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT platform, author_type, content_preview, engagement_data, hot_score, collected_at 
+                    FROM public.politician_sns_hotness
+                    WHERE member_name = %s
+                    ORDER BY hot_score DESC, collected_at DESC
+                    LIMIT %s
+                """, (member_name, limit))
+                rows = cur.fetchall()
+                results = [{
+                    "platform": r[0],
+                    "author_type": r[1],
+                    "content": r[2],
+                    "engagement": r[3],
+                    "hot_score": r[4],
+                    "date": r[5].strftime("%Y-%m-%d %H:%M:%S")
+                } for r in rows]
+                return JSONResponse(content={"posts": results})
+    except Exception as e:
+        return JSONResponse(content={"error": str(e), "posts": []}, status_code=500)
+
+@app.get('/api/sns/trends')
+def sns_trends(limit: int = 20):
+    """전체 의원 중 가장 화제가 되는 SNS 포스트 수집"""
+    try:
+        with psycopg2.connect(**graph_storage.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT member_name, platform, author_type, content_preview, engagement_data, hot_score, collected_at 
+                    FROM public.politician_sns_hotness
+                    ORDER BY hot_score DESC, collected_at DESC
+                    LIMIT %s
+                """, (limit,))
+                rows = cur.fetchall()
+                results = [{
+                    "member_name": r[0],
+                    "platform": r[1],
+                    "author_type": r[2],
+                    "content": r[3],
+                    "engagement": r[4],
+                    "hot_score": r[5],
+                    "date": r[6].strftime("%Y-%m-%d %H:%M:%S")
+                } for r in rows]
+                return JSONResponse(content={"trends": results})
+    except Exception as e:
+        return JSONResponse(content={"error": str(e), "trends": []}, status_code=500)
 
 @app.get('/api/search/{member_name}')
 def search(member_name: str):
