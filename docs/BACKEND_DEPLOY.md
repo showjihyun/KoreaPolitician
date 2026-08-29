@@ -110,6 +110,21 @@ async API 로 재작성해야 합니다. 대신 `graph_storage.run_sync()` 브�
 `ThreadPoolExecutor` 로 동시에 호출해도 안전합니다. 종료 시에는
 `close_sync()`(또는 `atexit`)로 풀과 루프를 정리합니다.
 
+### 회귀 테스트
+
+`backend/tests/test_async_db.py` 가 위 구조를 지킨다. 커넥션 누수, await 누락,
+Jsonb 어댑터, 스레드 브리지, 라우트 동작을 실제 PostgreSQL 로 확인한다.
+
+```bash
+docker run -d --name kp-test-pg -e POSTGRES_PASSWORD=testpw -p 55432:5432 postgres:15-alpine
+pip install -r backend/requirements-api.txt -r backend/requirements-dev.txt
+
+POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=55432 POSTGRES_PASSWORD=testpw   PYTHONPATH=backend pytest backend/tests/test_async_db.py -v
+```
+
+`korea_politician_test` DB 를 따로 만들어 쓰므로 개발용 데이터는 건드리지
+않는다. PostgreSQL 에 접속할 수 없으면 전부 skip 된다.
+
 ## 의존성 구조
 
 | 파일 | 용도 |
@@ -117,6 +132,7 @@ async API 로 재작성해야 합니다. 대신 `graph_storage.run_sync()` 브�
 | `backend/requirements-api.txt` | API 서버 런타임 (fastapi, uvicorn, psycopg3, Pillow) |
 | `backend/requirements-crawler.txt` | 크롤러 (playwright, torch, transformers, newspaper3k 등) |
 | `backend/requirements.txt` | 로컬 전체 개발용 |
+| `backend/requirements-dev.txt` | 테스트용 (pytest, httpx) |
 
 ## 무료 티어에서 알아둘 점
 

@@ -1,6 +1,7 @@
+# DB 접근은 async 이므로 동기 테스트에서는 run_sync 브리지로 호출한다.
 import os
 import logging
-from core.graph_storage import GraphStorage
+from core.graph_storage import GraphStorage, run_sync, close_sync
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -17,21 +18,23 @@ def test_persistence():
     
     logger.info("1. Initialize GraphStorage (First Run)")
     gs1 = GraphStorage()
-    gs1.init_db(db_config)
+    run_sync(gs1.init_db(db_config))
     
     # Add Data
     test_node_id = "test_node_001"
     test_edge_target = "test_node_002"
     
     logger.info(f"Adding Node: {test_node_id}")
-    gs1.add_node(test_node_id, ["TestLabel"], {"name": "Test Node", "score": 99})
+    run_sync(gs1.add_node(test_node_id, ["TestLabel"], {"name": "Test Node", "score": 99}))
     
     logger.info(f"Adding Edge: {test_node_id} -> {test_edge_target}")
-    gs1.add_edge(test_node_id, test_edge_target, "TEST_RELATION", {"weight": 0.5})
+    run_sync(gs1.add_edge(test_node_id, test_edge_target, "TEST_RELATION", {"weight": 0.5}))
     
     logger.info("2. Re-initialize GraphStorage (Simulate Restart)")
+    run_sync(gs1.close())
+
     gs2 = GraphStorage()
-    gs2.init_db(db_config)
+    run_sync(gs2.init_db(db_config))
     
     # Verify Data
     node = gs2.get_node(test_node_id)
@@ -48,6 +51,9 @@ def test_persistence():
     else:
         logger.error("Edge NOT found in DB!")
         
+    run_sync(gs2.close())
+    close_sync()
+
     logger.info("Persistence Test Completed.")
 
 if __name__ == "__main__":

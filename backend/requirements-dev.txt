@@ -1,0 +1,5 @@
+# Test-only dependencies.
+#   pip install -r backend/requirements-api.txt -r backend/requirements-dev.txt
+#   PYTHONPATH=backend pytest backend/tests/test_async_db.py -v
+pytest
+httpx

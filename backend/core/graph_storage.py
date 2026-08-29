@@ -525,17 +525,22 @@ def run_sync(coro):
     return asyncio.run_coroutine_threadsafe(coro, loop).result()
 
 
-def close_sync():
+def close_sync(storage: Optional["GraphStorage"] = None):
     """run_sync 로 열린 커넥션 풀과 전용 루프를 정리한다.
-    배치 스크립트 종료 시 finally 에서 호출할 것."""
+    배치 스크립트 종료 시 finally 에서 호출할 것.
+
+    storage 를 생략하면 전역 graph_storage 를 닫는다. 별도 인스턴스를
+    run_sync 로 썼다면 그 인스턴스를 넘겨야 풀이 닫힌다. 루프를 멈추기 전에
+    풀을 닫아야 백그라운드 태스크가 남지 않는다."""
     global _sync_loop, _sync_thread
     with _sync_lock:
         loop, thread = _sync_loop, _sync_thread
         _sync_loop, _sync_thread = None, None
     if loop is None or loop.is_closed():
         return
+    target = storage if storage is not None else graph_storage
     try:
-        asyncio.run_coroutine_threadsafe(graph_storage.close(), loop).result(timeout=30)
+        asyncio.run_coroutine_threadsafe(target.close(), loop).result(timeout=30)
     finally:
         loop.call_soon_threadsafe(loop.stop)
         if thread is not None:
