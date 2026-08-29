@@ -293,22 +293,33 @@ def get_target_politicians(db_config, limit=50):
     except:
         return POLITICIANS[:limit]
 
+# 네이버 목록 API 는 sid2 를 무시한다. 실측 결과 100-264 / 100-265 / 100-268 이
+# 100% 동일한 목록을 돌려줬다. 즉 예전 설정(7개 조합)은 같은 섹션을 2~3번씩
+# 중복으로 긁으면서 시간만 3배 쓰고 있었다. sid1 만 남긴다.
+#
+# 세계(104)·생활문화(103)도 확인했으나 의원 매칭이 0건이라 제외했다.
 SECTION_CODES = {
-    "Politics": [("100", "264"), ("100", "265"), ("100", "268")], # 청와대, 국회/정당, 북한
-    "Economy": [("101", "259"), ("101", "261")], # 금융, 산업/재계
-    "Society": [("102", "251"), ("102", "249")], # 노동, 사건사고
+    "Politics": "100",
+    "Economy": "101",
+    "Society": "102",
 }
 
-def crawl_naver_section(sid1, sid2, max_pages=3):
+# 페이지네이션은 정상 동작한다. 실측(sid1=100): 페이지마다 새 기사 약 20건씩
+# 누적되어 6페이지에 고유 기사 106건. 3페이지에서 5페이지로 늘리면
+# 정치 섹션만으로 고유 기사 91건 -> 의원 매칭 15건이 나온다.
+# (중복 제거로 아낀 시간을 여기에 쓴다.)
+SECTION_MAX_PAGES = 5
+
+def crawl_naver_section(sid1, max_pages=SECTION_MAX_PAGES):
     """네이버 뉴스 섹션별 크롤링 (Reverse Search)"""
     base_url = "https://news.naver.com/main/list.naver?mode=LSD&mid=sec"
     articles = []
 
     # 섹션 이름 찾기 (로깅용)
     section_name = "Unknown"
-    for sec, codes in SECTION_CODES.items():
-        if (sid1, sid2) in codes:
-            section_name = f"{sec}({sid1}-{sid2})"
+    for sec, code in SECTION_CODES.items():
+        if code == sid1:
+            section_name = f"{sec}({sid1})"
             break
 
     logger.info(f"[{section_name}] 섹션 크롤링 시작 (최대 {max_pages} 페이지)")
@@ -319,7 +330,7 @@ def crawl_naver_section(sid1, sid2, max_pages=3):
         page = context.new_page()
 
         for page_num in range(1, max_pages + 1):
-            url = f"{base_url}&sid1={sid1}&sid2={sid2}&page={page_num}"
+            url = f"{base_url}&sid1={sid1}&page={page_num}"
             try:
                 logger.info(f"[{section_name}] 페이지 {page_num}/{max_pages} 로드 중: {url}")
                 page.goto(url, timeout=30000)
@@ -357,7 +368,7 @@ def crawl_naver_section(sid1, sid2, max_pages=3):
                 logger.info(f"[{section_name}] 페이지 {page_num} 완료: {matched_count}개 기사 매칭됨.")
 
             except Exception as e:
-                logger.warning(f"Section crawl failed ({sid1}-{sid2} p{page_num}): {e}")
+                logger.warning(f"Section crawl failed (sid1={sid1} p{page_num}): {e}")
 
         browser.close()
 
@@ -568,9 +579,8 @@ def run_pipeline(db_config):
 
         # A. 섹션별 크롤링 (Reverse Search) - 우선 순위 높음
         logger.info("[섹션별 뉴스 수집 시작] 정치, 경제, 사회 분야 스캔...")
-        for section, codes in SECTION_CODES.items():
-            for sid1, sid2 in codes:
-                futures[collection_executor.submit(crawl_naver_section, sid1, sid2)] = f"Section: {section} ({sid1}-{sid2})"
+        for section, sid1 in SECTION_CODES.items():
+            futures[collection_executor.submit(crawl_naver_section, sid1)] = f"Section: {section} ({sid1})"
 
         # B. 개별 의원 키워드 검색
         logger.info("[개별 의원 키워드 검색 작업 등록 중...]")
