@@ -159,6 +159,31 @@ def save_to_postgresql(articles, db_config=None):
     except Exception as e:
         logger.error(f"[DB 저장 중 오류] {e}")
 
+def wake_api(timeout: int = 180) -> bool:
+    """슬립 중인 무료 인스턴스를 깨우고 준비될 때까지 기다린다.
+
+    Render 무료 플랜은 15분 무트래픽이면 잠들고 재기동에 약 1분 걸린다.
+    크롤러는 새벽에 도므로 서버는 거의 항상 자고 있다. 워밍업 없이 바로
+    POST 하면 첫 요청들이 타임아웃으로 버려져 관계가 조용히 유실된다.
+    """
+    health = api_base_url() + "/health"
+    deadline = time.time() + timeout
+    attempt = 0
+    while time.time() < deadline:
+        attempt += 1
+        try:
+            res = requests.get(health, timeout=30)
+            if res.status_code == 200:
+                logger.info(f"API 준비 완료 (시도 {attempt}회): {health}")
+                return True
+            logger.info(f"API 응답 {res.status_code}, 재시도")
+        except requests.RequestException as e:
+            logger.info(f"API 기동 대기 중 ({type(e).__name__})...")
+        time.sleep(5)
+    logger.error(f"{timeout}초 안에 API 를 깨우지 못했습니다: {health}")
+    return False
+
+
 def save_to_turingdb(results):
     # 배포 환경(GitHub Actions 등)에서는 API_BASE_URL 로 백엔드 주소를 지정한다.
     api_url = api_base_url() + "/api/edge"
@@ -187,7 +212,7 @@ def save_to_turingdb(results):
                 # 타임아웃이 없으면 슬립 중인 무료 인스턴스를 깨우는 동안
                 # 무한 대기할 수 있다.
                 response = requests.post(api_url, json=payload,
-                                         headers=headers, timeout=30)
+                                         headers=headers, timeout=60)
                 if response.status_code == 200: count += 1
             except Exception as e:
                 logger.error(f"Error saving to TuringDB: {e}")
@@ -608,6 +633,10 @@ if __name__ == "__main__":
     exit_code = 0
     try:
         ensure_news_schema()
+        # 무료 인스턴스는 자고 있다. 먼저 깨워야 관계 저장이 유실되지 않는다.
+        if not wake_api():
+            logger.warning("API 를 깨우지 못했습니다. 관계 저장은 실패할 수 있으나 "
+                           "뉴스 수집/감성분석은 계속 진행합니다.")
         run_pipeline(db_config)
     except Exception as e:
         logger.error(f"Pipeline critical error in single run: {e}")
