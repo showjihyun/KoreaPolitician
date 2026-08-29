@@ -101,8 +101,18 @@ graph TD
    python backend/scripts/run_news_sns.py
    ```
 4. **접속 주소**
-   - 프론트엔드: `http://localhost:3100`
+   - 프론트엔드: `http://localhost:3000`
    - API 문서: `http://localhost:5000/docs`
+
+### 프론트엔드
+프론트엔드는 별도 저장소에서 관리합니다 → [showjihyun/frontend](https://github.com/showjihyun/frontend)
+
+```bash
+git clone https://github.com/showjihyun/frontend.git frontend
+cd frontend && npm install && npm run dev
+```
+
+배포(Vercel): https://korea-politician.vercel.app
 
 ---
 
