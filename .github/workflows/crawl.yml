@@ -28,6 +28,10 @@ jobs:
       # 뉴스 파이프라인은 탐지한 관계를 API 의 /api/edge 로 POST 합니다.
       # 배포된 백엔드 주소를 넣지 않으면 localhost 로 붙어 실패합니다.
       API_BASE_URL: ${{ secrets.API_BASE_URL }}
+      # POST /api/edge 는 인증을 요구한다. Render 의 API_WRITE_TOKEN 과 같은 값.
+      API_WRITE_TOKEN: ${{ secrets.API_WRITE_TOKEN }}
+      # 커넥션 한도가 낮은 무료 DB 를 보호한다.
+      DB_POOL_MAX_SIZE: "3"
 
     steps:
       - uses: actions/checkout@v4

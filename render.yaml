@@ -31,3 +31,10 @@ services:
       # 애플리케이션 커넥션 풀 크기. Render 무료(512MB)에 맞춘 값입니다.
       - key: DB_POOL_MAX_SIZE
         value: "5"
+      # POST /api/edge 쓰기 인증 토큰. 설정하지 않으면 쓰기가 503 으로 막힙니다.
+      # 크롤러(GitHub Actions)에도 같은 값을 시크릿으로 등록해야 합니다.
+      - key: API_WRITE_TOKEN
+        generateValue: true
+      # 프론트엔드 출처만 허용하려면 지정합니다. 비우면 모든 출처 허용.
+      - key: CORS_ALLOW_ORIGINS
+        sync: false

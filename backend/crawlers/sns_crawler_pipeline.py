@@ -11,6 +11,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 from dotenv import load_dotenv
 from core.graph_storage import graph_storage, run_sync, close_sync
+from core.db_config import close_sync_pool, db_config_from_env, get_sync_pool
 
 # Load environment variables
 load_dotenv(os.path.join(os.path.dirname(__file__), '../.env'))
@@ -30,17 +31,12 @@ from crawlers.news_crawler_pipeline import POLITICIANS
 
 class SNSViralityCollector:
     def __init__(self):
-        self.db_config = {
-            'host': os.getenv('POSTGRES_HOST', 'localhost'),
-            'port': int(os.getenv('POSTGRES_PORT', 5432)),
-            'user': os.getenv('POSTGRES_USER', 'postgres'),
-            'password': os.getenv('POSTGRES_PASSWORD', '1234'),
-            'dbname': os.getenv('POSTGRES_DB', 'postgres'),
-        }
+        # 빈 문자열 환경변수(미등록 시크릿)를 미설정으로 처리한다.
+        self.db_config = db_config_from_env()
         # Initialize GraphDB connection
         load_dotenv('backend/.env')
         run_sync(graph_storage.init_db(self.db_config))
-        
+
         # 이름 -> ID 맵 구축 (최초 1회)
         self.name_to_id = {}
         members = graph_storage.find_nodes("Member")
@@ -49,14 +45,18 @@ class SNSViralityCollector:
 
     def _update_summary(self, name):
         """의원별 화제성 정보 요약 테이블 업데이트"""
+        # 예전에는 호출마다 psycopg.connect() 로 새 커넥션 + TLS 핸드셰이크를
+        # 해서, 다중 스레드 실행 시 관리형 Postgres 의 커넥션 한도를 즉시
+        # 소진했다. 공유 풀에서 빌리고 finally 에서 반드시 반납한다.
+        pool = get_sync_pool()
         conn = None
         try:
-            conn = psycopg.connect(**self.db_config)
+            conn = pool.getconn()
             cur = conn.cursor()
-            
+
             # 1. 최근 24시간 내 데이터 기반 실시간 요약 산출
             cur.execute("""
-                SELECT 
+                SELECT
                     SUM(hot_score) as total_score,
                     platform,
                     COUNT(*) as post_count
@@ -65,40 +65,40 @@ class SNSViralityCollector:
                 GROUP BY platform
                 ORDER BY total_score DESC
             """, (name,))
-            
+
             rows = cur.fetchall()
             current_total_score = sum(r[0] for r in rows) if rows else 0
             top_platform = rows[0][1] if rows else 'N/A'
-            
+
             # 2. 전체 이력 기반 누적 점수 산출
             cur.execute("""
                 SELECT SUM(hot_score) FROM public.politician_sns_hotness
                 WHERE member_name = %s
             """, (name,))
             cumulative_total_score = cur.fetchone()[0] or 0
-            
+
             # 3. 요약 테이블 업데이트 (UPSERT)
             cur.execute("""
-                INSERT INTO public.politician_hotness_summary 
+                INSERT INTO public.politician_hotness_summary
                 (member_name, current_hot_score, cumulative_hot_score, top_platform, last_updated)
                 VALUES (%s, %s, %s, %s, NOW())
-                ON CONFLICT (member_name) DO UPDATE 
-                SET 
+                ON CONFLICT (member_name) DO UPDATE
+                SET
                     daily_change = %s - politician_hotness_summary.current_hot_score,
                     current_hot_score = %s,
                     cumulative_hot_score = %s,
                     top_platform = %s,
                     last_updated = NOW()
-            """, (name, current_total_score, cumulative_total_score, top_platform, 
+            """, (name, current_total_score, cumulative_total_score, top_platform,
                   current_total_score, current_total_score, cumulative_total_score, top_platform))
-            
+
             conn.commit()
         except Exception as e:
             logger.error(f"Summary Update Error for {name}: {e}")
         finally:
-            # 예외가 나도 커넥션은 반드시 닫는다. 커넥션을 닫으면 커서도 함께 닫힌다.
+            # 예외가 나도 커넥션은 반드시 풀로 반납한다.
             if conn is not None:
-                conn.close()
+                pool.putconn(conn)
 
     def _detect_and_save_interactions(self, source_name, text, platform, hot_score):
         """텍스트에서 다른 정치인 언급을 탐지하여 그래프 엣지로 저장"""
@@ -108,16 +108,16 @@ class SNSViralityCollector:
         # 자신을 제외한 다른 정치인이 언급되었는지 확인
         for target_name in POLITICIANS:
             if target_name == source_name: continue
-            
+
             # 성을 뗀 이름만으로 검색하면 오탐이 많으므로 풀네임 기준
             if target_name in text:
                 target_id = self.name_to_id.get(target_name)
                 if target_id:
                     # SNS_INTERACTION 관계 추가
                     run_sync(graph_storage.add_edge(
-                        source_id, 
-                        target_id, 
-                        "SNS_INTERACTION", 
+                        source_id,
+                        target_id,
+                        "SNS_INTERACTION",
                         {
                             "platform": platform,
                             "impact": hot_score,
@@ -128,15 +128,19 @@ class SNSViralityCollector:
                     logger.info(f"  [Relation Found] {source_name} --[SNS]--> {target_name} ({platform})")
 
     def _save_to_db(self, data):
+        # 예전에는 호출마다 psycopg.connect() 로 새 커넥션 + TLS 핸드셰이크를
+        # 해서, 다중 스레드 실행 시 관리형 Postgres 의 커넥션 한도를 즉시
+        # 소진했다. 공유 풀에서 빌리고 finally 에서 반드시 반납한다.
+        pool = get_sync_pool()
         conn = None
         try:
-            conn = psycopg.connect(**self.db_config)
+            conn = pool.getconn()
             cur = conn.cursor()
             query = """
-                INSERT INTO public.politician_sns_hotness 
+                INSERT INTO public.politician_sns_hotness
                 (member_name, platform, author_type, post_id, content_preview, engagement_data, hot_score, sentiment_score)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (member_name, platform, post_id) DO UPDATE 
+                ON CONFLICT (member_name, platform, post_id) DO UPDATE
                 SET engagement_data = EXCLUDED.engagement_data,
                     hot_score = EXCLUDED.hot_score,
                     sentiment_score = EXCLUDED.sentiment_score,
@@ -152,7 +156,7 @@ class SNSViralityCollector:
             logger.error(f"DB Save Error: {e}")
         finally:
             if conn is not None:
-                conn.close()
+                pool.putconn(conn)
 
     def crawl_x_twitter(self, name):
         """X(Twitter) 리트윗/좋아요 수집 및 인플루언서 가중치 적용"""
@@ -166,18 +170,18 @@ class SNSViralityCollector:
                 search_url = f"https://x.com/search?q={requests.utils.quote(query)}&src=typed_query&f=top" # 'Top' 탭에서 인플루언서 위주 수집
                 page.goto(search_url, timeout=60000)
                 page.wait_for_selector('article', timeout=20000)
-                
+
                 tweets = page.query_selector_all('article')[:10]
                 for i, tweet in enumerate(tweets):
                     try:
                         text_el = tweet.query_selector('[data-testid="tweetText"]')
                         if not text_el: continue
                         text = text_el.inner_text()
-                        
+
                         # 인플루언서 여부 확인 (파란 딱지/인증 계정)
                         verified = tweet.query_selector('[aria-label="인증된 계정"]') is not None
                         authority_weight = 3.0 if verified else 1.0
-                        
+
                         metrics = tweet.query_selector_all('[data-testid="app-text-transition-container"]')
                         rt_count = 0
                         like_count = 0
@@ -190,12 +194,12 @@ class SNSViralityCollector:
                             else: continue
                             if rt_count == 0: rt_count = num
                             else: like_count = num
-                        
+
                         if rt_count > 5 or like_count > 20:
                             # 기본 점수에 인플루언서 가중치 적용
                             base_score = (rt_count * 2.5) + (like_count * 1.0)
                             final_score = base_score * authority_weight
-                            
+
                             results.append({
                                 "member_name": name,
                                 "platform": "X",
@@ -222,7 +226,7 @@ class SNSViralityCollector:
                 query = f"{name} 의원"
                 search_url = f"https://www.youtube.com/results?search_query={requests.utils.quote(query)}"
                 page.goto(search_url, timeout=60000)
-                
+
                 videos = page.query_selector_all('ytd-video-renderer')[:5]
                 for i, video in enumerate(videos):
                     try:
@@ -231,11 +235,11 @@ class SNSViralityCollector:
                         if not title_el: continue
                         title = title_el.inner_text()
                         channel_name = channel_el.inner_text() if channel_el else "Unknown"
-                        
+
                         # 특정 대형 정치 채널 가중치 (예시)
                         is_news_channel = any(kw in channel_name for kw in ['TV', '뉴스', '커뮤니케이션', '방송', '정치'])
                         authority_weight = 5.0 if is_news_channel else 1.0
-                        
+
                         meta = video.query_selector('#metadata-line').inner_text()
                         view_count = 0
                         if '조회수' in meta:
@@ -245,11 +249,11 @@ class SNSViralityCollector:
                                 if '만' in v_str: view_count = int(float(v_str.replace('만','')) * 10000)
                                 elif '천' in v_str: view_count = int(float(v_str.replace('천','')) * 1000)
                                 elif v_str.replace(',','').isdigit(): view_count = int(v_str.replace(',',''))
-                        
+
                         if view_count > 1000:
                             base_score = view_count * 0.05
                             final_score = base_score * authority_weight
-                            
+
                             results.append({
                                 "member_name": name,
                                 "platform": "YouTube",
@@ -279,7 +283,7 @@ class SNSViralityCollector:
                 tag = name.replace(" ", "")
                 search_url = f"https://www.instagram.com/explore/tags/{tag}/"
                 page.goto(search_url, timeout=60000)
-                
+
                 # 로그인 유도 팝업 등이 뜰 수 있으므로 예외 처리 강화
                 try:
                     page.wait_for_selector('article img', timeout=15000)
@@ -287,7 +291,7 @@ class SNSViralityCollector:
                     logger.warning(f"Instagram access limited for {name} (possible login required)")
                     browser.close()
                     return []
-                
+
                 # 인기 게시물 위주로 확인 (보통 상단 9개)
                 posts = page.query_selector_all('article a')[:5]
                 for i, post in enumerate(posts):
@@ -296,7 +300,7 @@ class SNSViralityCollector:
                         # 여기서는 데모용으로 해시태그 노출 빈도와 상위 노출 여부로 점수 산정
                         # 실제 운영시 세션 쿠키를 통한 심층 크롤링 필요
                         authority_weight = 3.0 # 인기 게시물 탭에 노출된 것 자체가 영향력 지표
-                        
+
                         results.append({
                             "member_name": name,
                             "platform": "Instagram",
@@ -315,33 +319,33 @@ class SNSViralityCollector:
     def run_for_name(self, name):
         logger.info(f"SNS 화제성 분석 시작 (X/YouTube/Instagram 병렬): {name}")
         all_data = []
-        
+
         # 의원 한 명당 3개 플랫폼을 동시에 크롤링 (성능 극대화)
         with ThreadPoolExecutor(max_workers=3) as platform_executor:
             task_x = platform_executor.submit(self.crawl_x_twitter, name)
             task_yt = platform_executor.submit(self.crawl_youtube, name)
             task_ig = platform_executor.submit(self.crawl_instagram, name)
-            
+
             for future in as_completed([task_x, task_yt, task_ig]):
                 try:
                     res = future.result()
                     if res: all_data.extend(res)
                 except Exception as e:
                     logger.error(f"Platform crawl error for {name}: {e}")
-        
+
         for d in all_data:
             self._save_to_db(d)
             # 관계 탐색 추가
             self._detect_and_save_interactions(
-                d['member_name'], 
-                d['content_preview'], 
-                d['platform'], 
+                d['member_name'],
+                d['content_preview'],
+                d['platform'],
                 d['hot_score']
             )
-        
+
         # 전체 수집 후 요약 정보 업데이트
         self._update_summary(name)
-        
+
         if all_data:
             top_score = max([x['hot_score'] for x in all_data])
             logger.info(f"  -> {name}: {len(all_data)}건 수집 완료 (최고 화제성: {top_score:.1f})")
@@ -361,18 +365,46 @@ class SNSViralityCollector:
             completed = 0
             for future in as_completed(futures):
                 completed += 1
-                try: 
+                try:
                     future.result()
                     if completed % 10 == 0 or completed == total:
                         logger.info(f"Progress: [{completed}/{total}] SNS analysis in progress...")
-                except Exception as e: 
+                except Exception as e:
                     logger.error(f"Task Error: {e}")
+        self._prune_old_rows()
         logger.info("=== SNS Virality Pipeline End ===")
+
+    def _prune_old_rows(self):
+        """오래된 화제성 행을 지운다.
+
+        크롤러가 매일 INSERT 만 하고 삭제하지 않아, 무료 플랜 500MB 를
+        채우는 것은 시간 문제였다. 요약 테이블에는 누적 점수가 남으므로
+        원본 포스트는 보존 기간만 유지한다.
+        """
+        days = int(os.getenv("SNS_RETENTION_DAYS") or 90)
+        try:
+            pool = get_sync_pool()
+            conn = pool.getconn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM public.politician_sns_hotness "
+                        "WHERE collected_at < NOW() - (%s || ' days')::interval",
+                        (str(days),),
+                    )
+                    deleted = cur.rowcount
+                conn.commit()
+                logger.info(f"보존 기간({days}일) 초과 SNS 행 {deleted}건 삭제")
+            finally:
+                pool.putconn(conn)
+        except Exception as e:
+            logger.error(f"SNS 보존 정책 적용 실패: {e}")
 
 if __name__ == "__main__":
     try:
         collector = SNSViralityCollector()
         collector.run_pipeline()
     finally:
-        # 비동기 커넥션 풀과 전용 이벤트 루프 정리
+        # 비동기 풀 / 전용 루프 / 동기 크롤러 풀 정리
         close_sync()
+        close_sync_pool()

@@ -56,17 +56,13 @@ def main():
     # graph_storage를 사용하기 위해 환경 설정
     sys.path.append(os.path.join(root_dir, 'backend'))
     from core.graph_storage import graph_storage, run_sync, close_sync
+    from core.db_config import db_config_from_env
     import atexit
     # 프로세스 종료 시 커넥션 풀과 전용 이벤트 루프 정리
     atexit.register(close_sync)
     
-    db_config = {
-        'host': os.getenv('POSTGRES_HOST', 'localhost'),
-        'port': int(os.getenv('POSTGRES_PORT', 5432)),
-        'user': os.getenv('POSTGRES_USER', 'postgres'),
-        'password': os.getenv('POSTGRES_PASSWORD', '1234'),
-        'dbname': os.getenv('POSTGRES_DB', 'postgres'),
-    }
+    # 빈 문자열 환경변수(미등록 시크릿)를 미설정으로 처리한다.
+    db_config = db_config_from_env()
     run_sync(graph_storage.init_db(db_config))
     
     while True:

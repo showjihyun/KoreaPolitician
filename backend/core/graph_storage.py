@@ -16,6 +16,7 @@ import sys
 import threading
 from typing import Dict, List, Any, Optional
 from collections import defaultdict
+from contextlib import asynccontextmanager
 
 import psycopg
 from psycopg.conninfo import make_conninfo
@@ -37,6 +38,15 @@ class GraphStorage:
         self.nodes: Dict[str, Dict[str, Any]] = {}
         self.edges: List[Dict[str, Any]] = []
         self.node_index: Dict[str, List[str]] = defaultdict(list)  # label -> node_ids
+        # 인접 인덱스. 예전에는 get_relationships 가 매번 self.edges 전체를
+        # 훑어서 /api/graph/all 한 번에 O(노드수 x 엣지수) 순회가 발생했다.
+        self.edges_out: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        self.edges_in: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        # (from, to, type) -> edge. 중복 엣지 탐색을 O(1) 로.
+        self._edge_by_key: Dict[tuple, Dict[str, Any]] = {}
+        # batch() 안에서는 DB 쓰기를 모았다가 한 번에 내보낸다.
+        self._batch_nodes: Optional[List[tuple]] = None
+        self._batch_edges: Optional[List[tuple]] = None
         self.db_config = None
         self._pool: Optional[AsyncConnectionPool] = None
 
@@ -56,6 +66,10 @@ class GraphStorage:
             min_size=1,
             max_size=int(os.environ.get("DB_POOL_MAX_SIZE", "5")),
             open=False,
+            # 관리형 Postgres(Supavisor 등)는 유휴 커넥션을 끊는다. check 를 주지
+            # 않으면 이미 닫힌 소켓이 요청에 배정되어 OperationalError 가 난다.
+            check=AsyncConnectionPool.check_connection,
+            max_idle=float(os.environ.get("DB_POOL_MAX_IDLE", "120")),
             # Supabase Supavisor(6543) 같은 트랜잭션 풀러는 prepared statement 를
             # 지원하지 않으므로 비활성화한다.
             kwargs={"prepare_threshold": None},
@@ -69,6 +83,18 @@ class GraphStorage:
             await self._pool.close()
             self._pool = None
             logger.info("DB connection pool closed.")
+
+    async def ping(self) -> bool:
+        """DB 가 실제로 응답하는지 확인한다. /health 에서 사용."""
+        if not self._pool:
+            return False
+        try:
+            async with self._pool.connection() as conn:
+                await conn.execute("SELECT 1")
+            return True
+        except Exception:
+            logger.exception("DB ping failed")
+            return False
 
     def connection(self):
         """풀에서 커넥션을 빌리는 비동기 컨텍스트 매니저.
@@ -138,13 +164,33 @@ class GraphStorage:
                             value TEXT,
                             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         );
+                        -- 조회 패턴에 맞춘 인덱스.
+                        -- /api/sns/trends 는 hot_score 로 전체 정렬하고,
+                        -- _update_summary 는 (member_name, collected_at) 로 최근 24시간을
+                        -- 훑는다. 인덱스가 없으면 둘 다 매번 Seq Scan + Sort 였다.
+                        CREATE INDEX IF NOT EXISTS idx_sns_hotness_score
+                            ON public.politician_sns_hotness (hot_score DESC, collected_at DESC);
+                        CREATE INDEX IF NOT EXISTS idx_sns_hotness_member_time
+                            ON public.politician_sns_hotness (member_name, collected_at DESC);
+                        CREATE INDEX IF NOT EXISTS idx_sns_hotness_collected
+                            ON public.politician_sns_hotness (collected_at);
+                        CREATE INDEX IF NOT EXISTS idx_turing_edges_source
+                            ON turing_edges (source_id);
+                        CREATE INDEX IF NOT EXISTS idx_turing_edges_target
+                            ON turing_edges (target_id);
+                        CREATE INDEX IF NOT EXISTS idx_turing_logs_id
+                            ON turing_logs (id DESC);
+
                         -- 초기 데이터 설정
                         INSERT INTO system_settings (key, value) VALUES ('last_data_update', CURRENT_DATE::TEXT)
                         ON CONFLICT (key) DO NOTHING;
                     """)
             logger.info("TuringDB persistence tables ready.")
-        except Exception as e:
-            logger.error(f"Failed to init tables: {e}")
+        except Exception:
+            # 예전에는 여기서 로그만 남기고 넘어가, 스키마가 없는 채로 서버가
+            # 정상 기동한 뒤 /health 까지 통과했다. 기동 실패는 드러나야 한다.
+            logger.exception("Failed to init tables")
+            raise
 
     async def load_from_db(self):
         """DB에서 데이터 로드"""
@@ -166,15 +212,16 @@ class GraphStorage:
                     await cur.execute("SELECT source_id, target_id, type, properties FROM turing_edges")
                     rows = await cur.fetchall()
                     for r in rows:
-                        self.edges.append({
+                        self._register_edge({
                             "from": r[0],
                             "to": r[1],
                             "type": r[2],
                             "properties": r[3]
                         })
                     logger.info(f"Loaded {len(self.edges)} edges from DB.")
-        except Exception as e:
-            logger.error(f"Failed to load from DB: {e}")
+        except Exception:
+            logger.exception("Failed to load from DB")
+            raise
 
     async def _persist_node(self, node_id, labels, properties):
         if not self._pool: return
@@ -186,8 +233,11 @@ class GraphStorage:
                         ON CONFLICT (id) DO UPDATE 
                         SET labels = EXCLUDED.labels, properties = EXCLUDED.properties
                     """, (node_id, labels, Jsonb(properties)))
-        except Exception as e:
-            logger.error(f"Failed to persist node {node_id}: {e}")
+        except Exception:
+            # 저장 실패를 삼키면 인메모리 그래프와 DB 가 조용히 갈라지고,
+            # API 는 200 을 돌려준다. 호출자가 알 수 있게 올린다.
+            logger.exception(f"Failed to persist node {node_id}")
+            raise
 
     async def _persist_edge(self, from_id, to_id, rel_type, properties):
         if not self._pool: return
@@ -199,8 +249,9 @@ class GraphStorage:
                         ON CONFLICT (source_id, target_id, type) DO UPDATE 
                         SET properties = EXCLUDED.properties
                     """, (from_id, to_id, rel_type, Jsonb(properties)))
-        except Exception as e:
-            logger.error(f"Failed to persist edge: {e}")
+        except Exception:
+            logger.exception("Failed to persist edge")
+            raise
 
     async def add_log(self, action: str, details: str):
         """활동 로그 추가 및 저장"""
@@ -241,42 +292,140 @@ class GraphStorage:
             logger.error(f"Failed to get logs: {e}")
             return []
         
-    async def add_node(self, node_id: str, labels: List[str], properties: Dict[str, Any]):
-        """노드 추가"""
+    def _register_node(self, node_id: str, labels: List[str], properties: Dict[str, Any]):
+        """인메모리 노드/인덱스 갱신 (DB 저장과 분리)."""
         self.nodes[node_id] = {
             "id": node_id,
             "labels": labels,
-            "properties": properties
+            "properties": properties,
         }
-        
-        # 인덱스 업데이트
         for label in labels:
             if node_id not in self.node_index[label]:
                 self.node_index[label].append(node_id)
-        
+
+    def _register_edge(self, edge: Dict[str, Any]) -> Dict[str, Any]:
+        """인메모리 엣지/인접 인덱스 갱신. 이미 있으면 properties 만 병합."""
+        key = (edge["from"], edge["to"], edge["type"])
+        existing = self._edge_by_key.get(key)
+        if existing is not None:
+            existing["properties"].update(edge.get("properties") or {})
+            return existing
+        self.edges.append(edge)
+        self._edge_by_key[key] = edge
+        self.edges_out[edge["from"]].append(edge)
+        self.edges_in[edge["to"]].append(edge)
+        return edge
+
+    async def add_node(self, node_id: str, labels: List[str], properties: Dict[str, Any]):
+        """노드 추가.
+
+        DB 에 먼저 쓰고 성공했을 때만 인메모리에 반영한다. 순서가 반대면
+        저장이 실패해도 메모리에는 남아, 재기동 전까지 있는 것처럼 보인다.
+        """
+        if self._batch_nodes is not None:
+            self._batch_nodes.append((node_id, labels, properties))
+            self._register_node(node_id, labels, properties)
+            return
         await self._persist_node(node_id, labels, properties)
-    
-    async def add_edge(self, from_id: str, to_id: str, rel_type: str, properties: Dict[str, Any] = None):
-        """엣지 추가"""
-        edge = {
+        self._register_node(node_id, labels, properties)
+
+    @asynccontextmanager
+    async def batch(self):
+        """블록 안의 add_node/add_edge 를 모았다가 종료 시 한 번에 저장한다.
+
+        최초 임포트는 노드/엣지 1,000건 이상을 각각 별도 트랜잭션으로 썼다.
+        원격 DB 왕복이 30~60ms 면 그것만으로 기동이 수십 초 걸려 배포
+        헬스체크를 넘긴다.
+
+        인메모리 등록은 즉시 한다. 임포터가 방금 추가한 노드를 find_nodes 로
+        다시 찾기 때문이다. 따라서 이 블록 안에서는 예외적으로 메모리가 DB보다
+        앞서며, 플러시가 실패하면 예외가 올라가 기동이 실패한다.
+        """
+        self._batch_nodes, self._batch_edges = [], []
+        try:
+            yield self
+        except Exception:
+            self._batch_nodes = self._batch_edges = None
+            raise
+        nodes, edges = self._batch_nodes, self._batch_edges
+        self._batch_nodes = self._batch_edges = None
+        await self.add_nodes_bulk(nodes)
+        await self.add_edges_bulk(edges)
+
+    async def add_nodes_bulk(self, items: List[tuple]):
+        """(node_id, labels, properties) 목록을 한 트랜잭션에 저장한다.
+
+        최초 임포트가 노드 하나마다 커넥션을 빌려 BEGIN/COMMIT 하면 왕복이
+        수백 번 발생해, 원격 DB 기준으로 기동이 수십 초씩 걸린다.
+        """
+        if not items or not self._pool:
+            return
+        params = [(nid, labels, Jsonb(props)) for nid, labels, props in items]
+        async with self._pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.executemany(
+                    """
+                    INSERT INTO turing_nodes (id, labels, properties)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE
+                    SET labels = EXCLUDED.labels, properties = EXCLUDED.properties
+                    """,
+                    params,
+                )
+        for node_id, labels, properties in items:
+            self._register_node(node_id, labels, properties)
+
+    async def add_edges_bulk(self, items: List[tuple]):
+        """(from_id, to_id, rel_type, properties) 목록을 한 트랜잭션에 저장한다."""
+        if not items or not self._pool:
+            return
+        merged_items = []
+        for from_id, to_id, rel_type, properties in items:
+            existing = self._edge_by_key.get((from_id, to_id, rel_type))
+            merged = dict(existing["properties"]) if existing else {}
+            merged.update(properties or {})
+            merged_items.append((from_id, to_id, rel_type, merged))
+
+        async with self._pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.executemany(
+                    """
+                    INSERT INTO turing_edges (source_id, target_id, type, properties)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (source_id, target_id, type) DO UPDATE
+                    SET properties = EXCLUDED.properties
+                    """,
+                    [(f, t, r, Jsonb(p)) for f, t, r, p in merged_items],
+                )
+        for from_id, to_id, rel_type, merged in merged_items:
+            self._register_edge({
+                "from": from_id, "to": to_id, "type": rel_type, "properties": merged,
+            })
+
+    async def add_edge(self, from_id: str, to_id: str, rel_type: str,
+                       properties: Dict[str, Any] = None) -> Dict[str, Any]:
+        """엣지 추가. 저장된 엣지를 돌려준다."""
+        key = (from_id, to_id, rel_type)
+        existing = self._edge_by_key.get(key)
+        merged = dict(existing["properties"]) if existing else {}
+        merged.update(properties or {})
+
+        if self._batch_edges is not None:
+            self._batch_edges.append((from_id, to_id, rel_type, merged))
+            return self._register_edge({
+                "from": from_id, "to": to_id, "type": rel_type, "properties": merged,
+            })
+
+        # DB 먼저. 실패하면 예외가 올라가고 메모리는 건드리지 않는다.
+        await self._persist_edge(from_id, to_id, rel_type, merged)
+
+        return self._register_edge({
             "from": from_id,
             "to": to_id,
             "type": rel_type,
-            "properties": properties or {}
-        }
-        
-        # Check if edge already exists to update it? 
-        # For simplicity, append to list (in-memory) but persist with upsert logic
-        # Ideally we should dedup in memory too.
-        existing = next((e for e in self.edges if e["from"] == from_id and e["to"] == to_id and e["type"] == rel_type), None)
-        if existing:
-            # Update properties
-            existing["properties"].update(properties or {})
-        else:
-            self.edges.append(edge)
-            
-        await self._persist_edge(from_id, to_id, rel_type, edge["properties"])
-    
+            "properties": merged,
+        })
+
     def get_node(self, node_id: str) -> Optional[Dict[str, Any]]:
         """노드 조회"""
         return self.nodes.get(node_id)
@@ -313,33 +462,32 @@ class GraphStorage:
         return results
     
     def get_relationships(self, node_id: str, direction: str = "both", rel_type: str = None) -> List[Dict[str, Any]]:
-        """노드의 관계 조회"""
+        """노드의 관계 조회. 인접 인덱스만 보므로 전체 엣지 수에 비례하지 않는다."""
         results = []
-        
-        for edge in self.edges:
-            if rel_type and edge["type"] != rel_type:
-                continue
-            
-            if direction in ["out", "both"] and edge["from"] == node_id:
-                results.append({
-                    "edge": edge,
-                    "node": self.nodes.get(edge["to"])
-                })
-            
-            if direction in ["in", "both"] and edge["to"] == node_id:
-                results.append({
-                    "edge": edge,
-                    "node": self.nodes.get(edge["from"])
-                })
-        
+
+        if direction in ("out", "both"):
+            for edge in self.edges_out.get(node_id, ()):
+                if rel_type and edge["type"] != rel_type:
+                    continue
+                results.append({"edge": edge, "node": self.nodes.get(edge["to"])})
+
+        if direction in ("in", "both"):
+            for edge in self.edges_in.get(node_id, ()):
+                if rel_type and edge["type"] != rel_type:
+                    continue
+                results.append({"edge": edge, "node": self.nodes.get(edge["from"])})
+
         return results
-    
+
     def get_path(self, start_id: str, max_depth: int = 2) -> Dict[str, Any]:
         """경로 탐색 (BFS)"""
         visited = set()
         queue = [(start_id, 0)]
         nodes = {}
         edges = []
+        # `edge not in edges` 는 딕셔너리를 통째로 비교하는 O(n) 검사라
+        # 엣지가 늘면 O(엣지^2) 가 된다. 키 집합으로 O(1) 처리한다.
+        seen_edges = set()
         
         while queue:
             current_id, depth = queue.pop(0)
@@ -363,7 +511,9 @@ class GraphStorage:
                         next_id = next_node["id"]
                         
                         # 엣지 추가
-                        if edge not in edges:
+                        key = (edge["from"], edge["to"], edge["type"])
+                        if key not in seen_edges:
+                            seen_edges.add(key)
                             edges.append(edge)
                         
                         # 큐에 추가
@@ -483,6 +633,9 @@ class GraphStorage:
         self.nodes.clear()
         self.edges.clear()
         self.node_index.clear()
+        self.edges_out.clear()
+        self.edges_in.clear()
+        self._edge_by_key.clear()
 
 
 # 전역 그래프 저장소

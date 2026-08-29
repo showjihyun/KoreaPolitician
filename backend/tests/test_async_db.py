@@ -325,6 +325,177 @@ def test_api_routes():
             os.environ["POSTGRES_DB"] = saved
 
 
+
+def _client_with_env(**env_overrides):
+    """환경변수를 적용해 서버 모듈을 다시 읽고 TestClient 를 만든다.
+
+    API_WRITE_TOKEN 등은 모듈 로드 시점에 읽히므로 reload 가 필요하다.
+    """
+    import importlib
+    from fastapi.testclient import TestClient
+
+    saved = {k: os.environ.get(k) for k in list(env_overrides) + ["POSTGRES_DB"]}
+    os.environ["POSTGRES_DB"] = CFG["dbname"]
+    for k, v in env_overrides.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+    import api.turingdb_server as server
+    importlib.reload(server)
+
+    def restore():
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    return TestClient(server.app), restore
+
+
+def test_write_endpoint_requires_token():
+    """POST /api/edge 는 인증 없이 열려 있으면 안 된다.
+
+    공개 URL 에 무인증 write 가 열려 있으면 누구나 임의의 엣지를 무한히
+    넣어 무료 DB 를 채울 수 있다.
+    """
+    if _skip():
+        return
+    if pytest is not None:
+        pytest.importorskip("httpx")
+    _reset()
+
+    payload = {"source": "나경원", "target": "안철수",
+               "type": "NEGATIVE_SENTIMENT", "properties": {"score": 1}}
+
+    client, restore = _client_with_env(API_WRITE_TOKEN="test-token")
+    try:
+        with client as c:
+            assert c.post("/api/edge", json=payload).status_code == 401, "토큰 없이 통과됨"
+            assert c.post("/api/edge", json=payload,
+                          headers={"X-API-Key": "wrong"}).status_code == 401
+            res = c.post("/api/edge", json=payload, headers={"X-API-Key": "test-token"})
+            assert res.status_code == 200, res.text
+            # add_edge 가 저장된 엣지를 돌려주는지 (예전에는 항상 null 이었다)
+            assert res.json().get("edge") is not None, "edge 가 null"
+    finally:
+        restore()
+
+    # 토큰을 설정하지 않으면 쓰기 자체를 막는다
+    client, restore = _client_with_env(API_WRITE_TOKEN=None)
+    try:
+        with client as c:
+            assert c.post("/api/edge", json=payload).status_code == 503
+    finally:
+        restore()
+
+
+def test_limit_is_clamped():
+    """limit 이 SQL LIMIT 로 그대로 흘러가 OOM 을 만들지 않는다."""
+    if _skip():
+        return
+    if pytest is not None:
+        pytest.importorskip("httpx")
+    _reset()
+
+    client, restore = _client_with_env()
+    try:
+        with client as c:
+            for path in ["/api/sns/trends?limit=100000000",
+                         "/api/sns/trends?limit=-1",
+                         "/api/graph/all?limit=999999",
+                         "/api/sns/hot_posts/나경원?limit=0"]:
+                assert c.get(path).status_code == 422, f"{path} 가 거부되지 않음"
+            assert c.get("/api/sns/trends?limit=20").status_code == 200
+    finally:
+        restore()
+
+
+def test_health_reports_database_state():
+    """/health 는 DB 를 실제로 확인한다 (예전에는 항상 healthy)."""
+    if _skip():
+        return
+    if pytest is not None:
+        pytest.importorskip("httpx")
+    _reset()
+
+    client, restore = _client_with_env()
+    try:
+        with client as c:
+            body = c.get("/health").json()
+            assert body["database"] == "up", body
+            assert "nodes" in body
+    finally:
+        restore()
+
+
+def test_schema_has_query_indexes():
+    """조회 패턴에 맞는 인덱스가 생성된다."""
+    if _skip():
+        return
+    _reset()
+    storage = GraphStorage()
+    try:
+        run_sync(storage.init_db(CFG))
+        rows = run_sync(storage.fetch_all(
+            "SELECT indexname FROM pg_indexes WHERE schemaname = 'public'"))
+        names = {r[0] for r in rows}
+        for expected in ("idx_sns_hotness_score", "idx_sns_hotness_member_time",
+                         "idx_turing_edges_source", "idx_turing_edges_target"):
+            assert expected in names, f"인덱스 누락: {expected} ({sorted(names)})"
+    finally:
+        run_sync(storage.close())
+
+
+def test_batch_avoids_per_row_transactions():
+    """batch() 안의 저장은 건별 트랜잭션이 되지 않는다.
+
+    최초 임포트가 노드마다 BEGIN/COMMIT 하면 원격 DB 왕복만으로 기동이
+    수십 초 걸려 배포 헬스체크를 넘긴다.
+    """
+    if _skip():
+        return
+    _reset()
+
+    def commits():
+        with psycopg.connect(**CFG) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT xact_commit FROM pg_stat_database WHERE datname = %s",
+                            (CFG["dbname"],))
+                return cur.fetchone()[0]
+
+    storage = GraphStorage()
+    try:
+        run_sync(storage.init_db(CFG))
+        before = commits()
+
+        async def _load():
+            async with storage.batch():
+                for i in range(200):
+                    await storage.add_node(f"b{i}", ["Member"], {"name": f"의원{i}"})
+                    await storage.add_edge(f"b{i}", "b0", "BELONGS_TO", {"i": i})
+
+        run_sync(_load())
+        used = commits() - before
+        assert used < 30, f"400건 저장에 커밋 {used}회 — 건별 트랜잭션으로 보인다"
+
+        rows = run_sync(storage.fetch_all("SELECT count(*) FROM turing_nodes"))
+        assert rows[0][0] == 200, f"저장된 노드 {rows[0][0]}/200"
+    finally:
+        run_sync(storage.close())
+
+
+def test_image_path_traversal_is_blocked():
+    """/api/images/{filename} 로 이미지 디렉터리 밖 파일을 읽을 수 없다."""
+    from core.image_manager import ImageManager
+
+    manager = ImageManager()
+    for evil in ["../../../etc/passwd.png", "../../app/secret.jpg",
+                 r"..\..\windows\win.ini.png"]:
+        assert manager.get_image_path(evil) is None, f"경로 조작이 통과됨: {evil}"
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = []

@@ -6,7 +6,7 @@
 """
 
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from PIL import Image
 import io
 from fastapi import HTTPException
@@ -42,7 +42,15 @@ class ImageManager:
         logger.info(f"Images dir exists: {self.images_dir.exists()}")
     
     def get_image_path(self, filename: str) -> Path:
-        """이미지 파일 경로 가져오기"""
+        """이미지 파일 경로 가져오기.
+
+        filename 은 URL 경로에서 온다. Starlette 는 %2F 를 세그먼트 매칭 후
+        '/' 로 복원하므로 '../..' 형태가 들어올 수 있다. 디렉터리 성분을
+        버리고 파일명만 사용해 images_dir 밖으로 나가지 못하게 한다.
+        """
+        filename = PurePosixPath(filename.replace("\\", "/")).name
+        if not filename or filename in (".", ".."):
+            return None
         # 확장자 처리
         possible_extensions = ['.jpg', '.jpeg', '.png', '.JPG', '.JPEG', '.PNG']
         

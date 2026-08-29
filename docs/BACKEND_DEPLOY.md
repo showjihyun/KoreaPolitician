@@ -52,6 +52,17 @@ SSL 은 `PGSSLMODE=require` 환경변수로 처리합니다(libpq 가 직접 읽
 `POSTGRES_PORT`(6543), `PGSSLMODE`(require), `DB_POOL_MAX_SIZE`(5)는
 블루프린트에 이미 들어 있습니다.
 
+`API_WRITE_TOKEN` 은 Render 가 자동 생성합니다(`generateValue: true`). 생성된
+값을 확인해 GitHub Actions 시크릿에도 같은 값을 등록해야 크롤러가 관계를
+저장할 수 있습니다.
+
+| 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `API_WRITE_TOKEN` | (자동 생성) | `POST /api/edge` 인증 토큰. **없으면 쓰기가 503 으로 막힙니다.** |
+| `CORS_ALLOW_ORIGINS` | 전체 허용 | 쉼표 구분 출처 목록. 프론트 도메인만 남기는 것을 권장합니다. |
+| `DB_POOL_MAX_SIZE` | 5 | 커넥션 풀 최대 크기 |
+| `SNS_RETENTION_DAYS` | 90 | 이 기간이 지난 SNS 원본 행을 크롤러가 삭제합니다 |
+
 3. 배포 후 `https://<서비스명>.onrender.com/health` 로 확인합니다.
 
 ### 프론트엔드 연결
@@ -74,8 +85,14 @@ VITE_API_BASE_URL = https://<서비스명>.onrender.com/api
 
 ```
 POSTGRES_HOST, POSTGRES_PORT, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
-API_BASE_URL   # 예: https://korea-politician-api.onrender.com
+API_BASE_URL      # 예: https://korea-politician-api.onrender.com
+API_WRITE_TOKEN   # Render 의 값과 동일해야 함
 ```
+
+> 시크릿을 등록하지 않으면 GitHub Actions 는 해당 환경변수를 "없음"이 아니라
+> **빈 문자열**로 주입합니다. `core/db_config.py` 가 빈 값을 미설정으로
+> 처리하지만, 접속 정보가 비면 결국 로컬 기본값으로 붙으려다 실패하므로
+> 위 목록은 전부 등록해야 합니다.
 
 `API_BASE_URL` 이 필요한 이유는, 뉴스 파이프라인의 `save_to_turingdb()` 가 탐지한
 관계를 API 의 `/api/edge` 로 POST 하기 때문입니다. 값이 없으면 `localhost:5000`

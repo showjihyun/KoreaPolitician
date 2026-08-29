@@ -1,9 +1,10 @@
-from fastapi import FastAPI, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 from core.graph_storage import graph_storage
+from core.db_config import db_config_from_env, env
 from scripts.simple_importer import SimpleImporter
 from core.image_manager import image_manager
 import logging
@@ -18,21 +19,18 @@ logging.basicConfig(level=logging.INFO)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """기동 시 DB 커넥션 풀을 열고 데이터를 적재하며, 종료 시 풀을 닫는다."""
-    db_config = {
-        'host': os.environ.get('POSTGRES_HOST', 'localhost'),
-        'port': int(os.environ.get('POSTGRES_PORT', 5432)),
-        'user': os.environ.get('POSTGRES_USER', 'postgres'),
-        'password': os.environ.get('POSTGRES_PASSWORD', '1234'),
-        'dbname': os.environ.get('POSTGRES_DB', 'postgres'),
-    }
-    await graph_storage.init_db(db_config)
+    # 빈 문자열 환경변수(미등록 시크릿)를 미설정으로 처리한다.
+    await graph_storage.init_db(db_config_from_env())
 
     json_file = "data/assembly_members_complete.json"
     # 노드가 없으면 JSON 에서 최초 임포트
     if os.path.exists(json_file) and (await graph_storage.get_statistics())["total_nodes"] == 0:
         logging.info("Loading data on startup...")
         importer = SimpleImporter()
-        await importer.import_data(json_file)
+        # 노드/엣지를 모아 한 트랜잭션으로 저장한다. 건별 왕복이면 원격 DB
+        # 기준으로 기동에만 수십 초가 걸려 헬스체크를 넘긴다.
+        async with graph_storage.batch():
+            await importer.import_data(json_file)
         logging.info("Data loaded successfully!")
 
     yield
@@ -64,20 +62,43 @@ class EdgeRequest(BaseModel):
     properties: dict = {}
 
 # CORS 설정
+# allow_origins=["*"] 와 allow_credentials=True 를 함께 쓰면 스펙상 무효이며,
+# Starlette 는 요청 Origin 을 그대로 반영해 사실상 모든 출처에 인증 포함
+# 요청을 허용한다. 이 API 는 쿠키를 쓰지 않으므로 credentials 를 끈다.
+# 배포 시 CORS_ALLOW_ORIGINS 로 출처를 좁힐 수 있다(쉼표 구분).
+_origins_raw = env("CORS_ALLOW_ORIGINS")
+_allow_origins = [o.strip() for o in _origins_raw.split(",")] if _origins_raw else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=_allow_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+# 쓰기 엔드포인트 보호용 토큰. 설정하지 않으면 쓰기를 막는다.
+# 공개 URL 에 무인증 write 를 열어두면 누구나 DB 를 채울 수 있다.
+API_WRITE_TOKEN = env("API_WRITE_TOKEN")
+
+
+def require_write_token(x_api_key: str = Header(default=None)):
+    """쓰기 요청 인증. 토큰 미설정 시 엔드포인트 자체를 비활성화한다."""
+    if not API_WRITE_TOKEN:
+        raise HTTPException(
+            status_code=503,
+            detail="쓰기 기능이 비활성화되어 있습니다. API_WRITE_TOKEN 을 설정하세요.",
+        )
+    if x_api_key != API_WRITE_TOKEN:
+        raise HTTPException(status_code=401, detail="유효하지 않은 API 키입니다.")
 
 # 정적 파일 서빙
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get('/api/graph/all')
-async def graph_all(limit: int = 350):
+async def graph_all(limit: int = Query(350, ge=1, le=1000)):
     """전체 정치인 관계 그래프 조회"""
     members = graph_storage.find_nodes("Member")
     
@@ -96,7 +117,8 @@ async def graph_all(limit: int = 350):
                 await cur.execute("SELECT member_name, current_hot_score, top_platform FROM public.politician_hotness_summary")
                 for r in await cur.fetchall():
                     hotness_map[r[0]] = {"score": r[1], "platform": r[2]}
-    except: pass
+    except Exception as e:
+        logging.warning(f"hotness summary 조회 실패: {e}")
 
     for member in limited_members:
         # 이미지 URL 및 화제성 점수 추가
@@ -162,7 +184,8 @@ async def graph(member_name: str, depth: int = Query(2, ge=1, le=5)):
                 await cur.execute("SELECT member_name, current_hot_score, top_platform FROM public.politician_hotness_summary")
                 for r in await cur.fetchall():
                     hotness_map[r[0]] = {"score": r[1], "platform": r[2]}
-    except: pass
+    except Exception as e:
+        logging.warning(f"hotness summary 조회 실패: {e}")
 
     # 이미지 URL 및 화제성 점수 추가
     for node in data["nodes"]:
@@ -178,7 +201,7 @@ async def graph(member_name: str, depth: int = Query(2, ge=1, le=5)):
     return JSONResponse(content=data)
 
 @app.get('/api/sns/hot_posts/{member_name}')
-async def sns_hot_posts(member_name: str, limit: int = 5):
+async def sns_hot_posts(member_name: str, limit: int = Query(5, ge=1, le=100)):
     """특정 의원의 화제가 된 SNS 포스트 수집"""
     try:
         async with graph_storage.connection() as conn:
@@ -204,7 +227,7 @@ async def sns_hot_posts(member_name: str, limit: int = 5):
         return JSONResponse(content={"error": str(e), "posts": []}, status_code=500)
 
 @app.get('/api/sns/trends')
-async def sns_trends(limit: int = 20):
+async def sns_trends(limit: int = Query(20, ge=1, le=200)):
     """전체 의원 중 가장 화제가 되는 SNS 포스트 수집"""
     try:
         async with graph_storage.connection() as conn:
@@ -251,7 +274,7 @@ def search(member_name: str):
     return JSONResponse(content={"members": results})
 
 @app.post('/api/edge')
-async def add_edge(req: EdgeRequest):
+async def add_edge(req: EdgeRequest, _auth: None = Depends(require_write_token)):
     """관계 추가"""
     # Find source and target nodes by name
     src_nodes = graph_storage.find_nodes("Member", {"name": f"CONTAINS:{req.source}"})
@@ -265,7 +288,12 @@ async def add_edge(req: EdgeRequest):
     src_id = src_nodes[0]["id"]
     tgt_id = tgt_nodes[0]["id"]
 
-    edge = await graph_storage.add_edge(src_id, tgt_id, req.type, req.properties)
+    try:
+        edge = await graph_storage.add_edge(src_id, tgt_id, req.type, req.properties)
+    except Exception as e:
+        # 저장 실패를 200 으로 돌려주면 크롤러가 성공한 줄 안다.
+        logging.exception("엣지 저장 실패")
+        return JSONResponse(content={"message": f"엣지 저장 실패: {e}"}, status_code=500)
     
     # Log Activity
     await log_activity("New Relation", f"{req.source} -> {req.target} ({req.type})")
@@ -345,7 +373,8 @@ def dcp_context(subject: str, target: str):
     return JSONResponse(content={"allies_context": context_data})
 
 @app.get('/api/activity_logs')
-async def get_activity_logs(limit: int = 50, history: bool = False, search: str = None):
+async def get_activity_logs(limit: int = Query(50, ge=1, le=200),
+                            history: bool = False, search: str = None):
     """활동 로그 조회 (기본값: 최근 50개)"""
     if history:
         # DB에서 히스토리 조회
@@ -372,9 +401,19 @@ async def get_intelligence():
     return JSONResponse(content=data)
 
 @app.get('/health')
-def health():
-    """헬스체크"""
-    return JSONResponse(content={"status": "healthy"})
+async def health():
+    """헬스체크.
+
+    예전에는 DB 를 보지 않고 항상 healthy 를 반환해서, DB 가 끊겨도
+    Render 헬스체크를 통과한 채 빈 그래프를 200 으로 서빙했다.
+    """
+    db_ok = await graph_storage.ping()
+    body = {
+        "status": "healthy" if db_ok else "degraded",
+        "database": "up" if db_ok else "down",
+        "nodes": len(graph_storage.nodes),
+    }
+    return JSONResponse(content=body, status_code=200 if db_ok else 503)
 
 if __name__ == "__main__":
     import uvicorn

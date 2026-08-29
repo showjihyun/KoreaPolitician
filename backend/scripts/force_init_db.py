@@ -4,7 +4,7 @@ import psycopg
 
 # Add root to sys.path for core imports
 sys.path.append(os.getcwd())
-from backend.core.graph_storage import GraphStorage
+from backend.core.graph_storage import GraphStorage, run_sync, close_sync
 
 def init_all_db():
     db_config = {
@@ -17,7 +17,8 @@ def init_all_db():
     
     gs = GraphStorage()
     print("Initializing tables...")
-    gs.init_db(db_config)
+    # init_db 는 코루틴이다. run_sync 없이 부르면 아무 일도 일어나지 않는다.
+    run_sync(gs.init_db(db_config))
     print("Tables created successfully.")
     
     # Run cumulative SQL
