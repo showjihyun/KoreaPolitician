@@ -1,6 +1,6 @@
 # Render 블루프린트 — API 서버(무료 플랜).
 # 데이터베이스는 Supabase 무료 Postgres 를 사용하고 접속 정보만 주입합니다.
-# (Render 자체 무료 Postgres 는 90일 후 만료되므로 쓰지 않습니다.)
+# (Render 자체 무료 Postgres 는 생성 후 30일에 만료되므로 쓰지 않습니다.)
 services:
   - type: web
     name: korea-politician-api

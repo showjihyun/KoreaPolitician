@@ -5,7 +5,7 @@
 | 구성 요소 | 서비스 | 무료 조건 |
 | --- | --- | --- |
 | PostgreSQL | [Supabase](https://supabase.com) | 500MB DB, 1GB 스토리지, API 요청 무제한, 프로젝트 2개 |
-| API 서버 | [Render](https://render.com) Web Service | 512MB RAM, 15분 미사용 시 슬립(재기동 30~60초) |
+| API 서버 | [Render](https://render.com) Web Service | 월 750 instance-hour, 15분 미사용 시 슬립(재기동 약 1분). **웹 서비스 자체는 만료 없음** |
 | 크롤러 | GitHub Actions | 공개 저장소는 표준 러너 무료, 16GB RAM |
 
 크롤러를 서버가 아닌 GitHub Actions 에서 돌리는 이유는 다음과 같습니다.
