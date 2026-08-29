@@ -14,6 +14,10 @@ python-dotenv
 requests
 beautifulsoup4
 lxml
+# newspaper3k(2020년 마지막 릴리스)는 lxml.html.clean 을 import 하는데,
+# lxml 5.x 부터 그 모듈이 lxml_html_clean 패키지로 분리됐다. 명시하지 않으면
+# 'lxml.html.clean module is now a separate project' ImportError 로 죽는다.
+lxml_html_clean
 newspaper3k
 torch
 transformers
