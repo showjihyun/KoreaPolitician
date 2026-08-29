@@ -1,6 +1,6 @@
 import os
 import sys
-import psycopg2
+import psycopg
 
 # Add root to sys.path for core imports
 sys.path.append(os.getcwd())
@@ -26,7 +26,7 @@ def init_all_db():
         sql = f.read()
     
     try:
-        with psycopg2.connect(**db_config) as conn:
+        with psycopg.connect(**db_config) as conn:
             with conn.cursor() as cur:
                 print("Updating cumulative hotness data...")
                 cur.execute(sql)

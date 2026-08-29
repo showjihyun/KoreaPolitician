@@ -1,4 +1,4 @@
-import psycopg2
+import psycopg
 import os
 
 def init_cumulative():
@@ -19,7 +19,7 @@ def init_cumulative():
         sql = f.read()
 
     try:
-        with psycopg2.connect(**db_config) as conn:
+        with psycopg.connect(**db_config) as conn:
             with conn.cursor() as cur:
                 print("Updating cumulative hotness data...")
                 cur.execute(sql)

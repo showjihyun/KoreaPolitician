@@ -43,7 +43,7 @@ class SimpleImporter:
         
         return count, [int(term) for term in terms]
     
-    def import_data(self, json_file_path):
+    async def import_data(self, json_file_path):
         """JSON 파일에서 데이터를 읽어와 그래프에 저장"""
         print("=== 데이터 임포트 시작 ===")
         
@@ -64,7 +64,7 @@ class SimpleImporter:
                 parties.add(member.get("party"))
         
         for party in parties:
-            self.storage.add_node(
+            await self.storage.add_node(
                 f"party_{party}",
                 ["Party"],
                 {"name": party}
@@ -81,20 +81,20 @@ class SimpleImporter:
         
         for sido, region in regions:
             if sido:
-                self.storage.add_node(
+                await self.storage.add_node(
                     f"sido_{sido}",
                     ["Region", "Sido"],
                     {"name": sido, "type": "sido"}
                 )
             
-            self.storage.add_node(
+            await self.storage.add_node(
                 f"region_{region}",
                 ["Region"],
                 {"name": region, "type": "region", "sido": sido or ""}
             )
             
             if sido:
-                self.storage.add_edge(
+                await self.storage.add_edge(
                     f"sido_{sido}",
                     f"region_{region}",
                     "CONTAINS"
@@ -113,7 +113,7 @@ class SimpleImporter:
             sido, region = self.parse_region(member.get("region"))
             election_count = member.get("election_count", "")
             
-            self.storage.add_node(
+            await self.storage.add_node(
                 f"member_{member_id}",
                 ["Member"],
                 {
@@ -146,7 +146,7 @@ class SimpleImporter:
             
             # 의원-정당 관계
             if member.get("party"):
-                self.storage.add_edge(
+                await self.storage.add_edge(
                     f"member_{member_id}",
                     f"party_{member.get('party')}",
                     "BELONGS_TO"
@@ -155,7 +155,7 @@ class SimpleImporter:
             # 의원-지역 관계
             sido, region = self.parse_region(member.get("region"))
             if region:
-                self.storage.add_edge(
+                await self.storage.add_edge(
                     f"member_{member_id}",
                     f"region_{region}",
                     "REPRESENTS"
@@ -163,7 +163,7 @@ class SimpleImporter:
         
         # 5단계: 의원 간 관계 생성
         print("\n5단계: 의원 간 관계 생성")
-        self.create_member_relationships(members_data)
+        await self.create_member_relationships(members_data)
         
         # 6단계: 약력 기반 관계 분석
         print("\n6단계: 약력 기반 관계 분석")
@@ -173,9 +173,9 @@ class SimpleImporter:
         print(f"총 {len(member_ids)}명의 의원 데이터 저장")
         
         # 통계 출력
-        self.get_statistics()
+        await self.get_statistics()
     
-    def create_member_relationships(self, members_data):
+    async def create_member_relationships(self, members_data):
         """의원 간 관계 생성 (불필요한 대규모 엣지 생성 억제)"""
         # 기존의 모든 조합 SAME_PARTY/SAME_REGION 생성은 엣지 폭증의 원인이므로 주석 처리
         # 대신 국회의원 노드와 정당 노드 간의 BELONGS_TO 관계로 연결성을 유지함
@@ -197,7 +197,7 @@ class SimpleImporter:
             p2_nodes = self.storage.find_nodes("Member", {"name": f"CONTAINS:{p2_name}"})
             
             if p1_nodes and p2_nodes:
-                self.storage.add_edge(
+                await self.storage.add_edge(
                     p1_nodes[0]["id"], 
                     p2_nodes[0]["id"], 
                     rel_type, 
@@ -210,9 +210,9 @@ class SimpleImporter:
         # 현재 JSON에는 약력 정보가 없으므로 스킵
         print("약력 정보가 없어 학력 관계 생성 스킵")
     
-    def get_statistics(self):
+    async def get_statistics(self):
         """통계 정보 출력"""
-        stats = self.storage.get_statistics()
+        stats = await self.storage.get_statistics()
         
         print("\n=== 데이터베이스 통계 ===")
         print(f"총 노드 수: {stats['total_nodes']}")
@@ -229,6 +229,7 @@ class SimpleImporter:
 
 if __name__ == "__main__":
     import argparse
+    import asyncio
     import os
     from dotenv import load_dotenv
     
@@ -249,7 +250,13 @@ if __name__ == "__main__":
     }
     
     print(f"Connecting to DB at {db_config['host']}:{db_config['port']}...")
-    graph_storage.init_db(db_config)
-    
-    importer = SimpleImporter()
-    importer.import_data(args.json)
+
+    async def _main():
+        await graph_storage.init_db(db_config)
+        try:
+            importer = SimpleImporter()
+            await importer.import_data(args.json)
+        finally:
+            await graph_storage.close()
+
+    asyncio.run(_main())

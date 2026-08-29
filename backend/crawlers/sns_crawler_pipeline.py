@@ -7,9 +7,10 @@ import requests
 import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from playwright.sync_api import sync_playwright
-import psycopg2
+import psycopg
+from psycopg.types.json import Jsonb
 from dotenv import load_dotenv
-from core.graph_storage import graph_storage
+from core.graph_storage import graph_storage, run_sync, close_sync
 
 # Load environment variables
 load_dotenv(os.path.join(os.path.dirname(__file__), '../.env'))
@@ -38,7 +39,7 @@ class SNSViralityCollector:
         }
         # Initialize GraphDB connection
         load_dotenv('backend/.env')
-        graph_storage.init_db(self.db_config)
+        run_sync(graph_storage.init_db(self.db_config))
         
         # 이름 -> ID 맵 구축 (최초 1회)
         self.name_to_id = {}
@@ -48,8 +49,9 @@ class SNSViralityCollector:
 
     def _update_summary(self, name):
         """의원별 화제성 정보 요약 테이블 업데이트"""
+        conn = None
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg.connect(**self.db_config)
             cur = conn.cursor()
             
             # 1. 최근 24시간 내 데이터 기반 실시간 요약 산출
@@ -91,10 +93,12 @@ class SNSViralityCollector:
                   current_total_score, current_total_score, cumulative_total_score, top_platform))
             
             conn.commit()
-            cur.close()
-            conn.close()
         except Exception as e:
             logger.error(f"Summary Update Error for {name}: {e}")
+        finally:
+            # 예외가 나도 커넥션은 반드시 닫는다. 커넥션을 닫으면 커서도 함께 닫힌다.
+            if conn is not None:
+                conn.close()
 
     def _detect_and_save_interactions(self, source_name, text, platform, hot_score):
         """텍스트에서 다른 정치인 언급을 탐지하여 그래프 엣지로 저장"""
@@ -110,7 +114,7 @@ class SNSViralityCollector:
                 target_id = self.name_to_id.get(target_name)
                 if target_id:
                     # SNS_INTERACTION 관계 추가
-                    graph_storage.add_edge(
+                    run_sync(graph_storage.add_edge(
                         source_id, 
                         target_id, 
                         "SNS_INTERACTION", 
@@ -120,12 +124,13 @@ class SNSViralityCollector:
                             "content": text[:100],
                             "last_seen": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         }
-                    )
+                    ))
                     logger.info(f"  [Relation Found] {source_name} --[SNS]--> {target_name} ({platform})")
 
     def _save_to_db(self, data):
+        conn = None
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg.connect(**self.db_config)
             cur = conn.cursor()
             query = """
                 INSERT INTO public.politician_sns_hotness 
@@ -139,14 +144,15 @@ class SNSViralityCollector:
             """
             cur.execute(query, (
                 data['member_name'], data['platform'], data.get('author_type', 'Citizen'),
-                data['post_id'], data['content_preview'], json.dumps(data['engagement_data']),
+                data['post_id'], data['content_preview'], Jsonb(data['engagement_data']),
                 data['hot_score'], data.get('sentiment_score', 0)
             ))
             conn.commit()
-            cur.close()
-            conn.close()
         except Exception as e:
             logger.error(f"DB Save Error: {e}")
+        finally:
+            if conn is not None:
+                conn.close()
 
     def crawl_x_twitter(self, name):
         """X(Twitter) 리트윗/좋아요 수집 및 인플루언서 가중치 적용"""
@@ -364,5 +370,9 @@ class SNSViralityCollector:
         logger.info("=== SNS Virality Pipeline End ===")
 
 if __name__ == "__main__":
-    collector = SNSViralityCollector()
-    collector.run_pipeline()
+    try:
+        collector = SNSViralityCollector()
+        collector.run_pipeline()
+    finally:
+        # 비동기 커넥션 풀과 전용 이벤트 루프 정리
+        close_sync()

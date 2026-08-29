@@ -2,5 +2,5 @@
 # Crawler / ML packages live in requirements-crawler.txt.
 fastapi
 uvicorn[standard]
-psycopg2-binary
+psycopg[binary,pool]
 Pillow

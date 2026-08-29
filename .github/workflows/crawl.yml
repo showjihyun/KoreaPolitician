@@ -24,7 +24,10 @@ jobs:
       POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
       POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
-      PGSSLMODE: require # Neon 등 관리형 Postgres 는 SSL 필수
+      PGSSLMODE: require # Supabase 등 관리형 Postgres 는 SSL 필수
+      # 뉴스 파이프라인은 탐지한 관계를 API 의 /api/edge 로 POST 합니다.
+      # 배포된 백엔드 주소를 넣지 않으면 localhost 로 붙어 실패합니다.
+      API_BASE_URL: ${{ secrets.API_BASE_URL }}
 
     steps:
       - uses: actions/checkout@v4

@@ -5,7 +5,7 @@ import hashlib
 from datetime import datetime, timedelta
 from playwright.sync_api import sync_playwright
 from newspaper import Article
-import psycopg2
+import psycopg
 import logging
 import traceback
 import json
@@ -94,7 +94,7 @@ logger.info(f"Setting MAX_WORKERS to {MAX_WORKERS} (80% of CPU)")
 
 def save_to_postgresql(articles, db_config):
     try:
-        with psycopg2.connect(**db_config) as conn:
+        with psycopg.connect(**db_config) as conn:
             with conn.cursor() as cur:
                 # 테이블 생성 (스키마 동일)
                 cur.execute("""
@@ -151,7 +151,8 @@ def save_to_postgresql(articles, db_config):
         logger.error(f"[DB 저장 중 오류] {e}")
 
 def save_to_turingdb(results):
-    api_url = "http://localhost:5000/api/edge"
+    # 배포 환경(GitHub Actions 등)에서는 API_BASE_URL 로 백엔드 주소를 지정한다.
+    api_url = os.getenv("API_BASE_URL", "http://localhost:5000").rstrip("/") + "/api/edge"
     count = 0
     for art in results:
         if 'relationships' not in art: continue
@@ -236,7 +237,7 @@ def crawl_past_30_days(max_articles_per_day=5):
 def get_target_politicians(db_config, limit=50):
     """뉴스 데이터가 부족한 국회의원 선별"""
     try:
-        with psycopg2.connect(**db_config) as conn:
+        with psycopg.connect(**db_config) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT politicians FROM public.news_sentiment")
                 rows = cur.fetchall()

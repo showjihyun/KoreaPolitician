@@ -1,14 +1,25 @@
 """
 간단한 인메모리 그래프 저장소
 TuringDB 대신 사용할 수 있는 경량 그래프 데이터베이스
+
+DB 접근은 psycopg3 의 비동기 커넥션 풀을 사용한다. 이전 구현은 메서드를
+호출할 때마다 psycopg2.connect() 로 새 커넥션을 열고 close() 하지 않아,
+노드 하나를 저장할 때마다 커넥션이 하나씩 늘어났다. 지금은 모든 DB 메서드가
+async 이며 풀에서 커넥션을 빌린 뒤 컨텍스트 매니저 종료 시 반드시 반납한다.
 """
 
-import json
-from typing import Dict, List, Any, Optional
-from collections import defaultdict
-import psycopg2
+import asyncio
 import json
 import logging
+import os
+import threading
+from typing import Dict, List, Any, Optional
+from collections import defaultdict
+
+import psycopg
+from psycopg.conninfo import make_conninfo
+from psycopg.types.json import Jsonb
+from psycopg_pool import AsyncConnectionPool
 
 logger = logging.getLogger(__name__)
 
@@ -19,20 +30,62 @@ class GraphStorage:
         self.edges: List[Dict[str, Any]] = []
         self.node_index: Dict[str, List[str]] = defaultdict(list)  # label -> node_ids
         self.db_config = None
+        self._pool: Optional[AsyncConnectionPool] = None
 
-    def init_db(self, db_config):
+    async def init_db(self, db_config):
         """DB 초기화 및 로드"""
         self.db_config = db_config
-        self.create_tables()
-        self.load_from_db()
+        await self._ensure_pool()
+        await self.create_tables()
+        await self.load_from_db()
 
-    def create_tables(self):
+    async def _ensure_pool(self):
+        """비동기 커넥션 풀 준비 (최초 1회)"""
+        if self._pool is not None or not self.db_config:
+            return
+        self._pool = AsyncConnectionPool(
+            make_conninfo(**self.db_config),
+            min_size=1,
+            max_size=int(os.environ.get("DB_POOL_MAX_SIZE", "5")),
+            open=False,
+            # Supabase Supavisor(6543) 같은 트랜잭션 풀러는 prepared statement 를
+            # 지원하지 않으므로 비활성화한다.
+            kwargs={"prepare_threshold": None},
+        )
+        await self._pool.open(wait=True, timeout=30)
+        logger.info("DB connection pool opened.")
+
+    async def close(self):
+        """커넥션 풀 종료. 애플리케이션 shutdown 에서 호출한다."""
+        if self._pool is not None:
+            await self._pool.close()
+            self._pool = None
+            logger.info("DB connection pool closed.")
+
+    def connection(self):
+        """풀에서 커넥션을 빌리는 비동기 컨텍스트 매니저.
+        블록을 벗어나면 커밋(예외 시 롤백) 후 풀로 반드시 반납된다."""
+        if not self._pool:
+            raise RuntimeError("DB pool is not initialized. call init_db() first.")
+        return self._pool.connection()
+
+    async def fetch_all(self, query: str, params: tuple = ()) -> List[tuple]:
+        """임의 SELECT 를 같은 풀로 실행한다. API 라우트가 직접 커넥션을
+        열지 않도록 하기 위한 헬퍼."""
+        if not self._pool:
+            return []
+        async with self._pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+                return await cur.fetchall()
+
+    async def create_tables(self):
         """테이블 생성"""
-        if not self.db_config: return
+        if not self._pool: return
         try:
-            with psycopg2.connect(**self.db_config) as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
+            async with self._pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("""
                         CREATE TABLE IF NOT EXISTS turing_nodes (
                             id TEXT PRIMARY KEY,
                             labels TEXT[],
@@ -81,20 +134,19 @@ class GraphStorage:
                         INSERT INTO system_settings (key, value) VALUES ('last_data_update', CURRENT_DATE::TEXT)
                         ON CONFLICT (key) DO NOTHING;
                     """)
-                conn.commit()
             logger.info("TuringDB persistence tables ready.")
         except Exception as e:
             logger.error(f"Failed to init tables: {e}")
 
-    def load_from_db(self):
+    async def load_from_db(self):
         """DB에서 데이터 로드"""
-        if not self.db_config: return
+        if not self._pool: return
         try:
-            with psycopg2.connect(**self.db_config) as conn:
-                with conn.cursor() as cur:
+            async with self._pool.connection() as conn:
+                async with conn.cursor() as cur:
                     # Load Nodes
-                    cur.execute("SELECT id, labels, properties FROM turing_nodes")
-                    rows = cur.fetchall()
+                    await cur.execute("SELECT id, labels, properties FROM turing_nodes")
+                    rows = await cur.fetchall()
                     for r in rows:
                         self.nodes[r[0]] = {"id": r[0], "labels": r[1], "properties": r[2]}
                         for label in r[1]:
@@ -103,8 +155,8 @@ class GraphStorage:
                     logger.info(f"Loaded {len(self.nodes)} nodes from DB.")
 
                     # Load Edges
-                    cur.execute("SELECT source_id, target_id, type, properties FROM turing_edges")
-                    rows = cur.fetchall()
+                    await cur.execute("SELECT source_id, target_id, type, properties FROM turing_edges")
+                    rows = await cur.fetchall()
                     for r in rows:
                         self.edges.append({
                             "from": r[0],
@@ -116,56 +168,50 @@ class GraphStorage:
         except Exception as e:
             logger.error(f"Failed to load from DB: {e}")
 
-    def _persist_node(self, node_id, labels, properties):
-        if not self.db_config: return
+    async def _persist_node(self, node_id, labels, properties):
+        if not self._pool: return
         try:
-            with psycopg2.connect(**self.db_config) as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
+            async with self._pool.connection() as conn:
+                await conn.execute("""
                         INSERT INTO turing_nodes (id, labels, properties)
                         VALUES (%s, %s, %s)
                         ON CONFLICT (id) DO UPDATE 
                         SET labels = EXCLUDED.labels, properties = EXCLUDED.properties
-                    """, (node_id, labels, json.dumps(properties)))
-                conn.commit()
+                    """, (node_id, labels, Jsonb(properties)))
         except Exception as e:
             logger.error(f"Failed to persist node {node_id}: {e}")
 
-    def _persist_edge(self, from_id, to_id, rel_type, properties):
-        if not self.db_config: return
+    async def _persist_edge(self, from_id, to_id, rel_type, properties):
+        if not self._pool: return
         try:
-            with psycopg2.connect(**self.db_config) as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
+            async with self._pool.connection() as conn:
+                await conn.execute("""
                         INSERT INTO turing_edges (source_id, target_id, type, properties)
                         VALUES (%s, %s, %s, %s)
                         ON CONFLICT (source_id, target_id, type) DO UPDATE 
                         SET properties = EXCLUDED.properties
-                    """, (from_id, to_id, rel_type, json.dumps(properties)))
-                conn.commit()
+                    """, (from_id, to_id, rel_type, Jsonb(properties)))
         except Exception as e:
             logger.error(f"Failed to persist edge: {e}")
 
-    def add_log(self, action: str, details: str):
+    async def add_log(self, action: str, details: str):
         """활동 로그 추가 및 저장"""
-        if not self.db_config: return
+        if not self._pool: return
         try:
-            with psycopg2.connect(**self.db_config) as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
+            async with self._pool.connection() as conn:
+                await conn.execute("""
                         INSERT INTO turing_logs (action, details)
                         VALUES (%s, %s)
                     """, (action, details))
-                conn.commit()
         except Exception as e:
             logger.error(f"Failed to add log: {e}")
 
-    def get_logs(self, limit: int = 100, search: str = None) -> List[Dict[str, Any]]:
+    async def get_logs(self, limit: int = 100, search: str = None) -> List[Dict[str, Any]]:
         """로그 조회 (검색 지원)"""
-        if not self.db_config: return []
+        if not self._pool: return []
         try:
-            with psycopg2.connect(**self.db_config) as conn:
-                with conn.cursor() as cur:
+            async with self._pool.connection() as conn:
+                async with conn.cursor() as cur:
                     query = "SELECT id, timestamp, action, details FROM turing_logs"
                     params = []
                     if search:
@@ -175,8 +221,8 @@ class GraphStorage:
                     query += " ORDER BY id DESC LIMIT %s"
                     params.append(limit)
                     
-                    cur.execute(query, tuple(params))
-                    rows = cur.fetchall()
+                    await cur.execute(query, tuple(params))
+                    rows = await cur.fetchall()
                     return [{
                         "id": r[0],
                         "timestamp": r[1].strftime("%Y-%m-%d %H:%M:%S"),
@@ -187,7 +233,7 @@ class GraphStorage:
             logger.error(f"Failed to get logs: {e}")
             return []
         
-    def add_node(self, node_id: str, labels: List[str], properties: Dict[str, Any]):
+    async def add_node(self, node_id: str, labels: List[str], properties: Dict[str, Any]):
         """노드 추가"""
         self.nodes[node_id] = {
             "id": node_id,
@@ -200,9 +246,9 @@ class GraphStorage:
             if node_id not in self.node_index[label]:
                 self.node_index[label].append(node_id)
         
-        self._persist_node(node_id, labels, properties)
+        await self._persist_node(node_id, labels, properties)
     
-    def add_edge(self, from_id: str, to_id: str, rel_type: str, properties: Dict[str, Any] = None):
+    async def add_edge(self, from_id: str, to_id: str, rel_type: str, properties: Dict[str, Any] = None):
         """엣지 추가"""
         edge = {
             "from": from_id,
@@ -221,7 +267,7 @@ class GraphStorage:
         else:
             self.edges.append(edge)
             
-        self._persist_edge(from_id, to_id, rel_type, edge["properties"])
+        await self._persist_edge(from_id, to_id, rel_type, edge["properties"])
     
     def get_node(self, node_id: str) -> Optional[Dict[str, Any]]:
         """노드 조회"""
@@ -321,40 +367,38 @@ class GraphStorage:
             "relationships": edges
         }
     
-    def get_setting(self, key: str, default: Any = None) -> Any:
+    async def get_setting(self, key: str, default: Any = None) -> Any:
         """시스템 설정 조회"""
-        if not self.db_config: return default
+        if not self._pool: return default
         try:
-            with psycopg2.connect(**self.db_config) as conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT value FROM system_settings WHERE key = %s", (key,))
-                    row = cur.fetchone()
+            async with self._pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("SELECT value FROM system_settings WHERE key = %s", (key,))
+                    row = await cur.fetchone()
                     return row[0] if row else default
         except Exception as e:
             logger.error(f"Failed to get setting {key}: {e}")
             return default
 
-    def set_setting(self, key: str, value: str):
+    async def set_setting(self, key: str, value: str):
         """시스템 설정 저장"""
-        if not self.db_config: return
+        if not self._pool: return
         try:
-            with psycopg2.connect(**self.db_config) as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
+            async with self._pool.connection() as conn:
+                await conn.execute("""
                         INSERT INTO system_settings (key, value, updated_at) 
                         VALUES (%s, %s, CURRENT_TIMESTAMP)
                         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
                     """, (key, value))
-                conn.commit()
         except Exception as e:
             logger.error(f"Failed to set setting {key}: {e}")
 
-    def get_statistics(self) -> Dict[str, Any]:
+    async def get_statistics(self) -> Dict[str, Any]:
         """통계 정보"""
         stats = {
             "total_nodes": len(self.nodes),
             "total_edges": len(self.edges),
-            "last_updated": self.get_setting("last_data_update", "2026-02-02"),
+            "last_updated": await self.get_setting("last_data_update", "2026-02-02"),
             "nodes_by_label": {},
             "edges_by_type": defaultdict(int)
         }
@@ -371,13 +415,13 @@ class GraphStorage:
         
         return stats
 
-    def get_intelligence(self) -> Dict[str, Any]:
+    async def get_intelligence(self) -> Dict[str, Any]:
         """정기적인 인사이트 리포트를 위한 인텔리전스 데이터 산출"""
         if not self.nodes: return {
             "top_influencers": [],
             "top_conflicts": [],
             "recent_events": [],
-            "stats": self.get_statistics()
+            "stats": await self.get_statistics()
         }
         
         # 1. 탑 영향력 정치인 (Outgoing social_impact_score 합계 기준)
@@ -417,13 +461,13 @@ class GraphStorage:
                 })
 
         # 3. 최근 주요 사건
-        recent_logs = self.get_logs(limit=10)
+        recent_logs = await self.get_logs(limit=10)
 
         return {
             "top_influencers": influencer_data,
             "top_conflicts": conflict_data,
             "recent_events": recent_logs,
-            "stats": self.get_statistics()
+            "stats": await self.get_statistics()
         }
     
     def clear(self):
@@ -435,3 +479,57 @@ class GraphStorage:
 
 # 전역 그래프 저장소
 graph_storage = GraphStorage()
+
+
+# --- 동기 배치 스크립트용 브리지 -------------------------------------------
+# 크롤러는 Playwright 의 sync API 를 사용한다. sync API 는 실행 중인 asyncio
+# 루프 안에서 호출할 수 없으므로 크롤러 자체를 async 로 만들 수 없다. 한편
+# 비동기 커넥션 풀은 생성된 이벤트 루프에 묶여 있어서, asyncio.run() 을 매번
+# 호출하면 새 루프가 생겨 풀이 깨진다.
+#
+# 그래서 전용 스레드에서 이벤트 루프를 하나 계속 돌리고, 동기 코드에서는
+# run_coroutine_threadsafe 로 작업을 넘긴다. 크롤러가 ThreadPoolExecutor 로
+# 여러 스레드에서 동시에 호출해도 안전하며, 호출하는 스레드에는 실행 중인
+# 루프가 없으므로 Playwright sync API 와도 충돌하지 않는다.
+_sync_loop: Optional[asyncio.AbstractEventLoop] = None
+_sync_thread: Optional[threading.Thread] = None
+_sync_lock = threading.Lock()
+
+
+def _ensure_sync_loop() -> asyncio.AbstractEventLoop:
+    global _sync_loop, _sync_thread
+    with _sync_lock:
+        if _sync_loop is not None and not _sync_loop.is_closed():
+            return _sync_loop
+        _sync_loop = asyncio.new_event_loop()
+        _sync_thread = threading.Thread(
+            target=_sync_loop.run_forever,
+            name="graph-storage-loop",
+            daemon=True,
+        )
+        _sync_thread.start()
+        return _sync_loop
+
+
+def run_sync(coro):
+    """동기 코드에서 async 저장소 메서드를 실행한다. 스레드 안전."""
+    loop = _ensure_sync_loop()
+    return asyncio.run_coroutine_threadsafe(coro, loop).result()
+
+
+def close_sync():
+    """run_sync 로 열린 커넥션 풀과 전용 루프를 정리한다.
+    배치 스크립트 종료 시 finally 에서 호출할 것."""
+    global _sync_loop, _sync_thread
+    with _sync_lock:
+        loop, thread = _sync_loop, _sync_thread
+        _sync_loop, _sync_thread = None, None
+    if loop is None or loop.is_closed():
+        return
+    try:
+        asyncio.run_coroutine_threadsafe(graph_storage.close(), loop).result(timeout=30)
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        if thread is not None:
+            thread.join(timeout=10)
+        loop.close()

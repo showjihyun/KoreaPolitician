@@ -55,7 +55,10 @@ def main():
     
     # graph_storage를 사용하기 위해 환경 설정
     sys.path.append(os.path.join(root_dir, 'backend'))
-    from core.graph_storage import graph_storage
+    from core.graph_storage import graph_storage, run_sync, close_sync
+    import atexit
+    # 프로세스 종료 시 커넥션 풀과 전용 이벤트 루프 정리
+    atexit.register(close_sync)
     
     db_config = {
         'host': os.getenv('POSTGRES_HOST', 'localhost'),
@@ -64,7 +67,7 @@ def main():
         'password': os.getenv('POSTGRES_PASSWORD', '1234'),
         'dbname': os.getenv('POSTGRES_DB', 'postgres'),
     }
-    graph_storage.init_db(db_config)
+    run_sync(graph_storage.init_db(db_config))
     
     while True:
         logger.info(f"=== [전체 파이프라인 시작] {time.strftime('%Y-%m-%d %H:%M:%S')} ===")
@@ -83,7 +86,7 @@ def main():
         if news_success or sns_success:
             today_str = time.strftime('%Y-%m-%d')
             logger.info(f"=== 통계 날짜 업데이트: {today_str} ===")
-            graph_storage.set_setting("last_data_update", today_str)
+            run_sync(graph_storage.set_setting("last_data_update", today_str))
 
         logger.info(f"=== [전체 파이프라인 종료] {INTERVAL_MINUTES}분 대기 후 재시작 ===")
         time.sleep(INTERVAL_MINUTES * 60)

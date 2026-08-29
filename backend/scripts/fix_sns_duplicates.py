@@ -1,4 +1,4 @@
-import psycopg2
+import psycopg
 import os
 
 def fix_duplicates():
@@ -12,7 +12,7 @@ def fix_duplicates():
     }
 
     try:
-        with psycopg2.connect(**db_config) as conn:
+        with psycopg.connect(**db_config) as conn:
             with conn.cursor() as cur:
                 print("1. Cleaning up existing duplicates...")
                 # Keep only one record per (member_name, platform, post_id)

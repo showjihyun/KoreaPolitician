@@ -1,4 +1,5 @@
-import psycopg2
+import psycopg
+from psycopg.types.json import Jsonb
 import json
 import os
 
@@ -12,7 +13,7 @@ def inject_test_data():
     }
     
     try:
-        conn = psycopg2.connect(**db_config)
+        conn = psycopg.connect(**db_config)
         cur = conn.cursor()
         
         # 1. Jo Kuk -> Han Dong-hoon (High Impact)
@@ -29,7 +30,7 @@ def inject_test_data():
             VALUES (%s, %s, %s, %s)
             ON CONFLICT (source_id, target_id, type) DO UPDATE 
             SET properties = EXCLUDED.properties
-        """, ('100005', '100008', 'NEGATIVE_SENTIMENT', json.dumps(edge_high)))
+        """, ('100005', '100008', 'NEGATIVE_SENTIMENT', Jsonb(edge_high)))
 
         # 2. Lee Jae-myung -> Han Dong-hoon (Moderate-High Impact)
         # ID: Lee(100006)
@@ -45,7 +46,7 @@ def inject_test_data():
             VALUES (%s, %s, %s, %s)
             ON CONFLICT (source_id, target_id, type) DO UPDATE 
             SET properties = EXCLUDED.properties
-        """, ('100006', '100008', 'NEGATIVE_SENTIMENT', json.dumps(edge_mid)))
+        """, ('100006', '100008', 'NEGATIVE_SENTIMENT', Jsonb(edge_mid)))
 
         # 3. An friendly relation for balance
         # ID: An Cheol-soo (100007? let's check or just use name)

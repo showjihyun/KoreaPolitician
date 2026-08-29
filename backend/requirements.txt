@@ -14,5 +14,5 @@ uvicorn
 pandas
 playwright
 Pillow 
-psycopg2-binary
+psycopg[binary,pool]
 python-dotenv

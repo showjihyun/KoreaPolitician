@@ -4,7 +4,7 @@
 
 | 구성 요소 | 서비스 | 무료 조건 |
 | --- | --- | --- |
-| PostgreSQL | [Neon](https://neon.tech) | 0.5GB 저장, 월 100 compute-hour, 영구 무료, 카드 불필요 |
+| PostgreSQL | [Supabase](https://supabase.com) | 500MB DB, 1GB 스토리지, API 요청 무제한, 프로젝트 2개 |
 | API 서버 | [Render](https://render.com) Web Service | 512MB RAM, 15분 미사용 시 슬립(재기동 30~60초) |
 | 크롤러 | GitHub Actions | 공개 저장소는 표준 러너 무료, 16GB RAM |
 
@@ -13,33 +13,44 @@
 쓰는데, 이 조합은 512MB 무료 인스턴스에서 동작하지 않습니다. 반면 크롤링은
 상시 서비스가 아니라 주기적 배치라 Actions 러너에 잘 맞습니다.
 
+> Supabase 무료 프로젝트는 **7일간 DB 활동이 없으면 일시정지**되고 수동으로
+> 재개해야 합니다. 이 저장소는 크롤러 워크플로가 매일 DB에 쓰기 때문에
+> 해당 상태에 도달하지 않습니다. 워크플로를 끄면 이 보호가 사라집니다.
+
 ---
 
-## 1. Neon PostgreSQL
+## 1. Supabase PostgreSQL
 
-1. [neon.tech](https://neon.tech) 가입 → 프로젝트 생성 (리전은 `AWS ap-southeast-1` 권장)
-2. Connection Details 에서 host / database / user / password 확인
+1. [supabase.com](https://supabase.com) 가입 → New project (리전은 `Northeast Asia (Seoul)` 권장)
+2. Project Settings → Database 에서 접속 정보 확인
 3. 스키마는 서버가 최초 기동할 때 `core/graph_storage.py` 가 자동 생성하고,
    `data/assembly_members_complete.json` 을 자동으로 임포트합니다. 수동 작업은 없습니다.
 
-Neon 은 SSL 을 요구합니다. 코드 수정 없이 `PGSSLMODE=require` 환경변수로 처리합니다
-(libpq 가 직접 읽습니다).
+### 포트는 6543 (Supavisor 트랜잭션 풀러)
+
+직결 포트 5432 가 아니라 **6543** 을 쓰십시오. 무료 플랜은 직결 커넥션 수가
+적고, 애플리케이션은 요청마다 풀에서 커넥션을 빌려 쓰기 때문에 풀러 경유가
+맞습니다. 트랜잭션 풀러는 prepared statement 를 지원하지 않으므로
+`graph_storage.py` 가 `prepare_threshold=None` 으로 이를 비활성화합니다.
+
+SSL 은 `PGSSLMODE=require` 환경변수로 처리합니다(libpq 가 직접 읽습니다).
 
 ## 2. Render API 서버
 
 저장소에 `render.yaml` 블루프린트가 있습니다.
 
 1. Render 대시보드 → **New → Blueprint** → 이 저장소 선택
-2. 아래 환경변수를 Neon 값으로 채웁니다.
+2. 아래 환경변수를 Supabase 값으로 채웁니다.
 
 | 변수 | 값 |
 | --- | --- |
-| `POSTGRES_HOST` | Neon 호스트 (`ep-...aws.neon.tech`) |
-| `POSTGRES_USER` | Neon 사용자 |
-| `POSTGRES_PASSWORD` | Neon 비밀번호 |
-| `POSTGRES_DB` | Neon 데이터베이스명 |
+| `POSTGRES_HOST` | `aws-0-....pooler.supabase.com` |
+| `POSTGRES_USER` | `postgres.<project-ref>` |
+| `POSTGRES_PASSWORD` | 프로젝트 DB 비밀번호 |
+| `POSTGRES_DB` | `postgres` |
 
-`POSTGRES_PORT`(5432)와 `PGSSLMODE`(require)는 블루프린트에 이미 들어 있습니다.
+`POSTGRES_PORT`(6543), `PGSSLMODE`(require), `DB_POOL_MAX_SIZE`(5)는
+블루프린트에 이미 들어 있습니다.
 
 3. 배포 후 `https://<서비스명>.onrender.com/health` 로 확인합니다.
 
@@ -63,7 +74,12 @@ VITE_API_BASE_URL = https://<서비스명>.onrender.com/api
 
 ```
 POSTGRES_HOST, POSTGRES_PORT, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
+API_BASE_URL   # 예: https://korea-politician-api.onrender.com
 ```
+
+`API_BASE_URL` 이 필요한 이유는, 뉴스 파이프라인의 `save_to_turingdb()` 가 탐지한
+관계를 API 의 `/api/edge` 로 POST 하기 때문입니다. 값이 없으면 `localhost:5000`
+으로 붙어 러너에서 실패합니다.
 
 `backend/scripts/run_news_sns.py` 는 `while True` 데몬이라 스케줄 실행에 맞지 않습니다.
 워크플로는 동일한 두 파이프라인(`news_crawler_pipeline.py`, `sns_crawler_pipeline.py`)을
@@ -71,39 +87,42 @@ POSTGRES_HOST, POSTGRES_PORT, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
 
 ---
 
-## 로컬에서 이미지 확인
+## DB 접근 구조
 
-빌드 컨텍스트는 `backend/` 가 아니라 **저장소 루트**입니다. 회원 데이터(`data/`)와
-사진(`img/`)이 `backend/` 바깥에 있어서, docker-compose 는 이를 바인드 마운트로
-넣어주지만 호스팅 환경에는 마운트가 없기 때문입니다. 루트 `Dockerfile` 이 두
-경로를 이미지에 함께 담습니다.
+드라이버는 **psycopg3** 이고, API 서버의 DB 접근은 전부 async 입니다.
 
-```bash
-docker build -t korea-politician-api .
-docker run -p 5000:5000 \
-  -e POSTGRES_HOST=... -e POSTGRES_USER=... -e POSTGRES_PASSWORD=... \
-  -e POSTGRES_DB=... -e PGSSLMODE=require \
-  korea-politician-api
-```
+- `core/graph_storage.py` 가 `AsyncConnectionPool` 을 하나 유지합니다.
+  풀은 FastAPI `lifespan` 에서 열리고 종료 시 닫힙니다.
+- DB 를 만지는 저장소 메서드(`add_node`, `add_edge`, `get_logs`, `get_setting`,
+  `get_statistics`, `get_intelligence` 등)는 모두 코루틴이며, 커넥션은
+  `async with pool.connection()` 으로 빌려 블록을 벗어날 때 커밋(예외 시 롤백)
+  후 반드시 반납됩니다.
+- 인메모리 그래프만 읽는 메서드(`find_nodes`, `get_relationships`, `get_path`,
+  `get_node`)는 DB 를 거치지 않으므로 동기 그대로입니다.
 
-## 무료 티어에서 알아둘 점
+### 크롤러가 동기인 이유
 
-- **첫 요청이 느립니다.** Render 무료 인스턴스는 15분 미사용 시 내려가고, 다음 요청에서
-  30~60초 걸려 다시 뜹니다. Neon 도 scale-to-zero 라 여기에 0.3~0.5초가 더 붙습니다.
-- **Neon 월 100 compute-hour** 는 상시 연결을 유지하면 약 4일이면 소진됩니다.
-  scale-to-zero 가 동작하도록 유휴 시 연결을 놓아두는 편이 좋습니다.
-- **Render 무료 Postgres 는 90일 후 만료**됩니다. 그래서 DB 를 Neon 으로 분리했습니다.
-- 슬립이 곤란해지면 Render Starter(월 $7) 또는 Fly.io 유료로 올리는 것이 가장 간단합니다.
+크롤러는 Playwright **sync API** 를 씁니다. sync API 는 실행 중인 asyncio 루프
+안에서 호출할 수 없어서, 크롤러를 async 로 만들려면 Playwright 호출 전체를
+async API 로 재작성해야 합니다. 대신 `graph_storage.run_sync()` 브리지를 통해
+같은 비동기 풀을 사용합니다. 이 브리지는 전용 스레드에서 이벤트 루프를 하나
+돌리고 `run_coroutine_threadsafe` 로 작업을 넘기므로, 크롤러가
+`ThreadPoolExecutor` 로 동시에 호출해도 안전합니다. 종료 시에는
+`close_sync()`(또는 `atexit`)로 풀과 루프를 정리합니다.
 
 ## 의존성 구조
 
 | 파일 | 용도 |
 | --- | --- |
-| `backend/requirements-api.txt` | API 서버 런타임 (fastapi, uvicorn, psycopg2, Pillow) |
+| `backend/requirements-api.txt` | API 서버 런타임 (fastapi, uvicorn, psycopg3, Pillow) |
 | `backend/requirements-crawler.txt` | 크롤러 (playwright, torch, transformers, newspaper3k 등) |
 | `backend/requirements.txt` | 로컬 전체 개발용 |
 
-`requirements.txt` 에 있던 `turingdb` 는 PyPI 에 존재하지 않아 `pip install` 이 통째로
-실패하고 있었습니다. 주석 처리했고, 실제로는 `scripts/turingdb_importer.py` 에서만
-쓰입니다. API 서버와 크롤러는 `core/graph_storage.py` 를 통해 PostgreSQL 을 사용합니다.
-크롤러가 쓰는데 누락돼 있던 `python-dotenv` 도 추가했습니다.
+## 무료 티어에서 알아둘 점
+
+- **첫 요청이 느립니다.** Render 무료 인스턴스는 15분 미사용 시 내려가고, 다음 요청에서
+  30~60초 걸려 다시 뜹니다.
+- **Supabase 는 7일 무활동 시 일시정지**됩니다. 크롤러 워크플로가 매일 돌면
+  발생하지 않습니다.
+- **백업이 없습니다.** 무료 플랜에는 자동 백업이 포함되지 않습니다.
+- 슬립이 곤란해지면 Render Starter(월 $7) 로 올리는 것이 가장 간단합니다.

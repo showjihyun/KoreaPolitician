@@ -8,7 +8,7 @@
 #    pipeline but were missing from requirements.txt.
 #  - torch + transformers are pulled in by crawlers/affective_analysis.py
 #    (KoBERT sentiment scoring) and account for most of the install size.
-psycopg2-binary
+psycopg[binary,pool]
 playwright
 python-dotenv
 requests

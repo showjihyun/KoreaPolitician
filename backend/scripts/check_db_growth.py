@@ -1,4 +1,4 @@
-import psycopg2
+import psycopg
 import os
 from datetime import datetime, timedelta
 
@@ -12,7 +12,7 @@ def check_db_growth():
     }
 
     try:
-        with psycopg2.connect(**db_config) as conn:
+        with psycopg.connect(**db_config) as conn:
             with conn.cursor() as cur:
                 # 1. 최근 10분 내 뉴스 데이터 수
                 ten_mins_ago = (datetime.now() - timedelta(minutes=10)).strftime('%Y-%m-%d %H:%M:%S')

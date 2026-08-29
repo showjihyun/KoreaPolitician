@@ -3,7 +3,8 @@ GraphDB 데이터 구조 시각화 도구
 Node, Edge, Properties를 보기 좋게 출력
 """
 
-from core.graph_storage import graph_storage
+from core.graph_storage import graph_storage, run_sync, close_sync
+import atexit
 from scripts.simple_importer import SimpleImporter
 import json
 import os
@@ -47,7 +48,7 @@ def show_database_overview():
     """데이터베이스 전체 개요"""
     print_separator("GraphDB 데이터베이스 개요")
     
-    stats = graph_storage.get_statistics()
+    stats = run_sync(graph_storage.get_statistics())
     
     print(f"📊 전체 통계")
     print(f"  총 노드 수: {stats['total_nodes']:,}개")
@@ -184,7 +185,7 @@ def export_to_json(output_file="graph_export.json"):
     print_separator(f"JSON 내보내기: {output_file}")
     
     data = {
-        "statistics": graph_storage.get_statistics(),
+        "statistics": run_sync(graph_storage.get_statistics()),
         "nodes": list(graph_storage.nodes.values()),
         "edges": graph_storage.edges
     }
@@ -200,10 +201,10 @@ def export_to_json(output_file="graph_export.json"):
 def main():
     """메인 실행 함수"""
     # 데이터 로드 확인
-    if graph_storage.get_statistics()['total_nodes'] == 0:
+    if run_sync(graph_storage.get_statistics())['total_nodes'] == 0:
         print("데이터를 로드하는 중...")
         importer = SimpleImporter()
-        importer.import_data("data/assembly_members_complete.json")
+        run_sync(importer.import_data("data/assembly_members_complete.json"))
         print()
     
     # 1. 데이터베이스 개요
@@ -232,6 +233,10 @@ def main():
     print_separator("완료")
     print("GraphDB 데이터 구조 분석이 완료되었습니다.")
     print("자세한 내용은 graph_structure.json 파일을 확인하세요.")
+
+
+# 종료 시 커넥션 풀과 전용 이벤트 루프 정리
+atexit.register(close_sync)
 
 
 if __name__ == "__main__":

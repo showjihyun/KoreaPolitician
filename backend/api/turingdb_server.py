@@ -10,18 +10,44 @@ import logging
 from collections import deque
 import datetime
 from pydantic import BaseModel
-import psycopg2
+from contextlib import asynccontextmanager
 
 
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """기동 시 DB 커넥션 풀을 열고 데이터를 적재하며, 종료 시 풀을 닫는다."""
+    db_config = {
+        'host': os.environ.get('POSTGRES_HOST', 'localhost'),
+        'port': int(os.environ.get('POSTGRES_PORT', 5432)),
+        'user': os.environ.get('POSTGRES_USER', 'postgres'),
+        'password': os.environ.get('POSTGRES_PASSWORD', '1234'),
+        'dbname': os.environ.get('POSTGRES_DB', 'postgres'),
+    }
+    await graph_storage.init_db(db_config)
+
+    json_file = "data/assembly_members_complete.json"
+    # 노드가 없으면 JSON 에서 최초 임포트
+    if os.path.exists(json_file) and (await graph_storage.get_statistics())["total_nodes"] == 0:
+        logging.info("Loading data on startup...")
+        importer = SimpleImporter()
+        await importer.import_data(json_file)
+        logging.info("Data loaded successfully!")
+
+    yield
+
+    # 종료 시 커넥션 풀 반납
+    await graph_storage.close()
+
+
+app = FastAPI(lifespan=lifespan)
 
 # Activity Log Queue (In-Memory, Ring Buffer)
 activity_logs = deque(maxlen=50)
 
-def log_activity(action: str, details: str):
-    graph_storage.add_log(action, details)
+async def log_activity(action: str, details: str):
+    await graph_storage.add_log(action, details)
     # Still keep in memory for very fast live updates if needed, 
     # but the API will primarily fetch from DB now.
     log = {
@@ -50,30 +76,8 @@ app.add_middleware(
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# 서버 시작 시 데이터 로드
-@app.on_event("startup")
-async def startup_event():
-    """서버 시작 시 데이터 로드"""
-    # DB Init
-    db_config = {
-        'host': os.environ.get('POSTGRES_HOST', 'localhost'),
-        'port': int(os.environ.get('POSTGRES_PORT', 5432)),
-        'user': os.environ.get('POSTGRES_USER', 'postgres'),
-        'password': os.environ.get('POSTGRES_PASSWORD', '1234'),
-        'dbname': os.environ.get('POSTGRES_DB', 'postgres'),
-    }
-    graph_storage.init_db(db_config)
-
-    json_file = "data/assembly_members_complete.json"
-    # Check if nodes exist, if not import from JSON
-    if os.path.exists(json_file) and graph_storage.get_statistics()["total_nodes"] == 0:
-        logging.info("Loading data on startup...")
-        importer = SimpleImporter()
-        importer.import_data(json_file)
-        logging.info("Data loaded successfully!")
-
 @app.get('/api/graph/all')
-def graph_all(limit: int = 350):
+async def graph_all(limit: int = 350):
     """전체 정치인 관계 그래프 조회"""
     members = graph_storage.find_nodes("Member")
     
@@ -87,10 +91,10 @@ def graph_all(limit: int = 350):
     # Fetch hotness scores for these members
     hotness_map = {}
     try:
-        with psycopg2.connect(**graph_storage.db_config) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT member_name, current_hot_score, top_platform FROM public.politician_hotness_summary")
-                for r in cur.fetchall():
+        async with graph_storage.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT member_name, current_hot_score, top_platform FROM public.politician_hotness_summary")
+                for r in await cur.fetchall():
                     hotness_map[r[0]] = {"score": r[1], "platform": r[2]}
     except: pass
 
@@ -134,7 +138,7 @@ def graph_all(limit: int = 350):
     })
 
 @app.get('/api/graph/{member_name}')
-def graph(member_name: str, depth: int = Query(2, ge=1, le=5)):
+async def graph(member_name: str, depth: int = Query(2, ge=1, le=5)):
     """특정 의원의 관계 그래프 조회"""
     # 의원 검색
     members = graph_storage.find_nodes("Member", {"name": f"CONTAINS:{member_name}"})
@@ -153,10 +157,10 @@ def graph(member_name: str, depth: int = Query(2, ge=1, le=5)):
     # Fetch hotness scores for these members
     hotness_map = {}
     try:
-        with psycopg2.connect(**graph_storage.db_config) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT member_name, current_hot_score, top_platform FROM public.politician_hotness_summary")
-                for r in cur.fetchall():
+        async with graph_storage.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT member_name, current_hot_score, top_platform FROM public.politician_hotness_summary")
+                for r in await cur.fetchall():
                     hotness_map[r[0]] = {"score": r[1], "platform": r[2]}
     except: pass
 
@@ -174,19 +178,19 @@ def graph(member_name: str, depth: int = Query(2, ge=1, le=5)):
     return JSONResponse(content=data)
 
 @app.get('/api/sns/hot_posts/{member_name}')
-def sns_hot_posts(member_name: str, limit: int = 5):
+async def sns_hot_posts(member_name: str, limit: int = 5):
     """특정 의원의 화제가 된 SNS 포스트 수집"""
     try:
-        with psycopg2.connect(**graph_storage.db_config) as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
+        async with graph_storage.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
                     SELECT platform, author_type, content_preview, engagement_data, hot_score, collected_at 
                     FROM public.politician_sns_hotness
                     WHERE member_name = %s
                     ORDER BY hot_score DESC, collected_at DESC
                     LIMIT %s
                 """, (member_name, limit))
-                rows = cur.fetchall()
+                rows = await cur.fetchall()
                 results = [{
                     "platform": r[0],
                     "author_type": r[1],
@@ -200,18 +204,18 @@ def sns_hot_posts(member_name: str, limit: int = 5):
         return JSONResponse(content={"error": str(e), "posts": []}, status_code=500)
 
 @app.get('/api/sns/trends')
-def sns_trends(limit: int = 20):
+async def sns_trends(limit: int = 20):
     """전체 의원 중 가장 화제가 되는 SNS 포스트 수집"""
     try:
-        with psycopg2.connect(**graph_storage.db_config) as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
+        async with graph_storage.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
                     SELECT member_name, platform, author_type, content_preview, engagement_data, hot_score, collected_at 
                     FROM public.politician_sns_hotness
                     ORDER BY hot_score DESC, collected_at DESC
                     LIMIT %s
                 """, (limit,))
-                rows = cur.fetchall()
+                rows = await cur.fetchall()
                 results = [{
                     "member_name": r[0],
                     "platform": r[1],
@@ -247,7 +251,7 @@ def search(member_name: str):
     return JSONResponse(content={"members": results})
 
 @app.post('/api/edge')
-def add_edge(req: EdgeRequest):
+async def add_edge(req: EdgeRequest):
     """관계 추가"""
     # Find source and target nodes by name
     src_nodes = graph_storage.find_nodes("Member", {"name": f"CONTAINS:{req.source}"})
@@ -261,17 +265,17 @@ def add_edge(req: EdgeRequest):
     src_id = src_nodes[0]["id"]
     tgt_id = tgt_nodes[0]["id"]
 
-    edge = graph_storage.add_edge(src_id, tgt_id, req.type, req.properties)
+    edge = await graph_storage.add_edge(src_id, tgt_id, req.type, req.properties)
     
     # Log Activity
-    log_activity("New Relation", f"{req.source} -> {req.target} ({req.type})")
+    await log_activity("New Relation", f"{req.source} -> {req.target} ({req.type})")
     
     return JSONResponse(content={"message": "Edge added", "edge": edge})
 
 @app.get('/api/stats')
-def stats():
+async def stats():
     """통계 정보"""
-    stats = graph_storage.get_statistics()
+    stats = await graph_storage.get_statistics()
     return JSONResponse(content=stats)
 
 @app.get('/api/images/{filename}')
@@ -341,11 +345,11 @@ def dcp_context(subject: str, target: str):
     return JSONResponse(content={"allies_context": context_data})
 
 @app.get('/api/activity_logs')
-def get_activity_logs(limit: int = 50, history: bool = False, search: str = None):
+async def get_activity_logs(limit: int = 50, history: bool = False, search: str = None):
     """활동 로그 조회 (기본값: 최근 50개)"""
     if history:
         # DB에서 히스토리 조회
-        logs = graph_storage.get_logs(limit=limit if limit <= 200 else 200, search=search)
+        logs = await graph_storage.get_logs(limit=limit if limit <= 200 else 200, search=search)
         return JSONResponse(content={"logs": logs})
     
     # In-memory 필터링 (간단 검색)
@@ -362,9 +366,9 @@ def list_images():
     return JSONResponse(content={"images": images})
 
 @app.get('/api/intelligence')
-def get_intelligence():
+async def get_intelligence():
     """상업용 인사이트 조회를 위한 지능형 분석 데이터 제공"""
-    data = graph_storage.get_intelligence()
+    data = await graph_storage.get_intelligence()
     return JSONResponse(content=data)
 
 @app.get('/health')

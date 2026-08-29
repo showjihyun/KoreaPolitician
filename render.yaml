@@ -1,6 +1,6 @@
 # Render 블루프린트 — API 서버(무료 플랜).
-# 데이터베이스는 Neon 무료 Postgres 를 쓰고 접속 정보만 환경변수로 주입합니다.
-# (Render 무료 Postgres 는 90일 후 만료되므로 사용하지 않습니다.)
+# 데이터베이스는 Supabase 무료 Postgres 를 사용하고 접속 정보만 주입합니다.
+# (Render 자체 무료 Postgres 는 90일 후 만료되므로 쓰지 않습니다.)
 services:
   - type: web
     name: korea-politician-api
@@ -11,7 +11,7 @@ services:
     dockerContext: .
     healthCheckPath: /health
     envVars:
-      # 아래 4개는 Neon 대시보드의 접속 정보로 채웁니다.
+      # Supabase 대시보드 → Project Settings → Database 의 값으로 채웁니다.
       - key: POSTGRES_HOST
         sync: false
       - key: POSTGRES_USER
@@ -20,8 +20,14 @@ services:
         sync: false
       - key: POSTGRES_DB
         sync: false
+      # Supavisor 트랜잭션 풀러 포트. 직결(5432)이 아니라 6543 을 씁니다.
+      # 무료 플랜은 직결 커넥션 수가 적고, API 는 요청마다 풀에서 커넥션을
+      # 빌려 쓰므로 풀러 경유가 맞습니다.
       - key: POSTGRES_PORT
-        value: "5432"
-      # 관리형 Postgres 는 SSL 을 요구합니다. libpq 가 이 값을 읽습니다.
+        value: "6543"
+      # 관리형 Postgres 는 SSL 필수. libpq 가 이 값을 읽습니다.
       - key: PGSSLMODE
         value: require
+      # 애플리케이션 커넥션 풀 크기. Render 무료(512MB)에 맞춘 값입니다.
+      - key: DB_POOL_MAX_SIZE
+        value: "5"

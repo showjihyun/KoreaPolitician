@@ -1,4 +1,4 @@
-import psycopg2
+import psycopg
 import os
 from dotenv import load_dotenv
 
@@ -14,7 +14,7 @@ def fix_constraints():
     }
 
     try:
-        with psycopg2.connect(**db_config) as conn:
+        with psycopg.connect(**db_config) as conn:
             with conn.cursor() as cur:
                 print("Deduplicating and adding unique constraint...")
                 # 1. Deduplicate
