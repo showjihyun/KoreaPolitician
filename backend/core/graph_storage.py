@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import threading
 from typing import Dict, List, Any, Optional
 from collections import defaultdict
@@ -22,6 +23,13 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 logger = logging.getLogger(__name__)
+
+if sys.platform == "win32":
+    # psycopg3 의 비동기 구현은 Windows 기본 ProactorEventLoop 를 지원하지 않는다.
+    #   "Psycopg cannot use the 'ProactorEventLoop' to run in async mode"
+    # 배포 대상인 Linux 는 SelectorEventLoop 가 기본이라 영향이 없고,
+    # 이 설정은 Windows 로컬 개발/크롤러 실행에서만 적용된다.
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 class GraphStorage:
