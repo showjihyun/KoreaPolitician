@@ -1,0 +1,19 @@
+# Dependencies for the news / SNS crawling pipeline.
+#
+#   pip install -r backend/requirements-crawler.txt
+#   playwright install --with-deps chromium
+#
+# Notes:
+#  - python-dotenv, newspaper3k, torch and transformers are imported by the
+#    pipeline but were missing from requirements.txt.
+#  - torch + transformers are pulled in by crawlers/affective_analysis.py
+#    (KoBERT sentiment scoring) and account for most of the install size.
+psycopg2-binary
+playwright
+python-dotenv
+requests
+beautifulsoup4
+lxml
+newspaper3k
+torch
+transformers

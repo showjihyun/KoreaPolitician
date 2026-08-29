@@ -61,3 +61,29 @@ node_modules/
 # Environment
 .env.local
 .env.*.local
+
+# --- 루트 컨텍스트 빌드용 추가 (Dockerfile 참고) ---
+
+# 프론트엔드는 별도 저장소/별도 배포
+frontend/
+
+# CI 정의
+.github/
+
+# 문서 및 에이전트 작업 폴더
+docs/
+.kiro/
+.agent/
+.refs/
+
+# API 이미지에 불필요한 것들
+turingdb/
+backend/tests/
+backend/graph_structure.json
+
+# 크롤링 디버그 산출물
+matched_response.html
+member_detail_sample.html
+popup_sample.html
+member_data_sample.json
+data/assembly_page_debug.html

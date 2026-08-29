@@ -2,7 +2,11 @@ requests==2.31.0
 beautifulsoup4==4.12.2
 lxml==4.9.3
 neo4j==5.15.0
-turingdb
+# turingdb is NOT on PyPI (only github.com/turing-db/turingdb-sdk-python).
+# Leaving it here makes `pip install -r requirements.txt` fail outright.
+# It is used only by scripts/turingdb_importer.py; the API server and the
+# crawlers use PostgreSQL via core/graph_storage.py instead.
+# turingdb
 flask==3.0.0
 flask-cors==4.0.0
 fastapi
@@ -11,3 +15,4 @@ pandas
 playwright
 Pillow 
 psycopg2-binary
+python-dotenv

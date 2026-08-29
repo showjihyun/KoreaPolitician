@@ -1,0 +1,27 @@
+# Render 블루프린트 — API 서버(무료 플랜).
+# 데이터베이스는 Neon 무료 Postgres 를 쓰고 접속 정보만 환경변수로 주입합니다.
+# (Render 무료 Postgres 는 90일 후 만료되므로 사용하지 않습니다.)
+services:
+  - type: web
+    name: korea-politician-api
+    runtime: docker
+    plan: free
+    region: singapore # 한국에서 가장 가까운 무료 리전
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      # 아래 4개는 Neon 대시보드의 접속 정보로 채웁니다.
+      - key: POSTGRES_HOST
+        sync: false
+      - key: POSTGRES_USER
+        sync: false
+      - key: POSTGRES_PASSWORD
+        sync: false
+      - key: POSTGRES_DB
+        sync: false
+      - key: POSTGRES_PORT
+        value: "5432"
+      # 관리형 Postgres 는 SSL 을 요구합니다. libpq 가 이 값을 읽습니다.
+      - key: PGSSLMODE
+        value: require

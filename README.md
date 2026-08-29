@@ -114,6 +114,9 @@ cd frontend && npm install && npm run dev
 
 배포(Vercel): https://korea-politician.vercel.app
 
+### 백엔드 배포
+무료 티어(Neon + Render + GitHub Actions) 구성 가이드: [docs/BACKEND_DEPLOY.md](docs/BACKEND_DEPLOY.md)
+
 ---
 
 ## 🤝 기여 및 라이선스

@@ -1,0 +1,51 @@
+name: crawl-news-sns
+
+# 뉴스/SNS 수집 파이프라인을 GitHub Actions 에서 주기 실행합니다.
+# 공개 저장소이므로 표준 러너 사용량은 무료이며, 러너(16GB RAM)가
+# Playwright 와 torch 를 무리 없이 감당합니다.
+on:
+  schedule:
+    - cron: "0 19 * * *" # 매일 04:00 KST (UTC 19:00)
+  workflow_dispatch: # 수동 실행
+
+concurrency:
+  group: crawl-news-sns
+  cancel-in-progress: false
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PYTHONPATH: ${{ github.workspace }}/backend
+      PYTHONIOENCODING: utf-8
+      POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+      POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+      PGSSLMODE: require # Neon 등 관리형 Postgres 는 SSL 필수
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-crawler.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements-crawler.txt
+
+      - name: Install Playwright browser
+        run: playwright install --with-deps chromium
+
+      # run_news_sns.py 는 while True 데몬이라 스케줄 실행에 맞지 않습니다.
+      # 동일한 두 파이프라인을 1회씩 직접 호출합니다.
+      - name: News pipeline
+        run: python backend/crawlers/news_crawler_pipeline.py
+
+      - name: SNS pipeline
+        if: always() # 뉴스 단계가 실패해도 SNS 는 시도
+        run: python backend/crawlers/sns_crawler_pipeline.py
