@@ -12,6 +12,7 @@ from psycopg.types.json import Jsonb
 from dotenv import load_dotenv
 from core.graph_storage import graph_storage, run_sync, close_sync
 from core.db_config import close_sync_pool, db_config_from_env, get_sync_pool
+from core.name_matcher import find_names
 
 # Load environment variables
 load_dotenv(os.path.join(os.path.dirname(__file__), '../.env'))
@@ -105,27 +106,28 @@ class SNSViralityCollector:
         source_id = self.name_to_id.get(source_name)
         if not source_id: return
 
-        # 자신을 제외한 다른 정치인이 언급되었는지 확인
-        for target_name in POLITICIANS:
-            if target_name == source_name: continue
+        # 자신을 제외한 다른 정치인이 언급되었는지 확인.
+        # 단순 부분일치는 '김건희' 에서 '김건' 을 뽑아내므로 공용 매처를 쓴다.
+        # 후보 전체(POLITICIANS)를 넘겨야 긴 이름 우선 규칙이 동작한다.
+        for target_name in find_names(text, POLITICIANS):
+            if target_name == source_name:
+                continue
 
-            # 성을 뗀 이름만으로 검색하면 오탐이 많으므로 풀네임 기준
-            if target_name in text:
-                target_id = self.name_to_id.get(target_name)
-                if target_id:
-                    # SNS_INTERACTION 관계 추가
-                    run_sync(graph_storage.add_edge(
-                        source_id,
-                        target_id,
-                        "SNS_INTERACTION",
-                        {
-                            "platform": platform,
-                            "impact": hot_score,
-                            "content": text[:100],
-                            "last_seen": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        }
-                    ))
-                    logger.info(f"  [Relation Found] {source_name} --[SNS]--> {target_name} ({platform})")
+            target_id = self.name_to_id.get(target_name)
+            if target_id:
+                # SNS_INTERACTION 관계 추가
+                run_sync(graph_storage.add_edge(
+                    source_id,
+                    target_id,
+                    "SNS_INTERACTION",
+                    {
+                        "platform": platform,
+                        "impact": hot_score,
+                        "content": text[:100],
+                        "last_seen": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                ))
+                logger.info(f"  [Relation Found] {source_name} --[SNS]--> {target_name} ({platform})")
 
     def _save_to_db(self, data):
         # 예전에는 호출마다 psycopg.connect() 로 새 커넥션 + TLS 핸드셰이크를

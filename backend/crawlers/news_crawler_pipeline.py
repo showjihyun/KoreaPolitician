@@ -7,6 +7,7 @@ from playwright.sync_api import sync_playwright
 from newspaper import Article
 import sys
 import psycopg
+from core.name_matcher import find_names
 from core.db_config import (api_base_url, close_sync_pool,
                             db_config_from_env, env, get_sync_pool)
 import logging
@@ -85,11 +86,10 @@ def extract_politicians(text, name_list):
     if not has_keyword:
         return []
 
-    found = set()
-    for name in name_list:
-        if name in text:
-            found.add(name)
-    return list(found)
+    # 예전에는 `if name in text` 단순 부분일치였다. 2글자 이름(김건·김윤·
+    # 김현·박정·손솔·허영·황희)이 김건희·박정희·허영심·김윤덕 같은 낱말의
+    # 앞부분과 겹쳐 실제 언급이 없는 관계를 만들어냈다.
+    return find_names(text, name_list)
 
 # CPU 코어의 80%를 사용하여 병렬 처리 수 결정
 MAX_WORKERS = max(1, int((os.cpu_count() or 4) * 0.8))
