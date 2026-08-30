@@ -5,6 +5,7 @@ import hashlib
 from datetime import datetime, timedelta
 from playwright.sync_api import sync_playwright
 from newspaper import Article
+from bs4 import BeautifulSoup
 import sys
 import psycopg
 from core.name_matcher import find_names
@@ -59,8 +60,50 @@ except Exception as e:
 dcp_calc = DCPCalculator()
 logger.info("DCPCalculator 초기화 성공")
 
+# 네이버 기사 본문 컨테이너. 앞에서부터 먼저 잡히는 것을 쓴다.
+NAVER_BODY_SELECTORS = ("#dic_area", "#newsct_article", "#articeBody", "#articleBodyContents")
+
+_ARTICLE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+}
+
+
+def _naver_article_text(url):
+    """네이버 기사 본문을 직접 파싱한다.
+
+    newspaper3k 의 일반 추출 규칙은 네이버 마크업에서 본문을 못 찾고
+    보일러플레이트 83자만 돌려준다. 실측(정치 섹션 10건): newspaper3k 는
+    150자 기준을 1건만 통과했고, 전용 파서는 10건 전부 통과했다(530~2033자).
+    이 때문에 분석 대상 54건 중 3건만 저장되고 있었다.
+
+    브라우저가 필요 없어 newspaper3k 보다 빠르기도 하다.
+    """
+    res = requests.get(url, headers=_ARTICLE_HEADERS, timeout=15)
+    res.raise_for_status()
+    soup = BeautifulSoup(res.text, "lxml")
+    for selector in NAVER_BODY_SELECTORS:
+        node = soup.select_one(selector)
+        if not node:
+            continue
+        for tag in node(["script", "style"]):
+            tag.decompose()
+        text = node.get_text("\n", strip=True)
+        if text:
+            return text
+    return ""
+
+
 def get_article_text(url):
+    if not url:
+        return ""
     try:
+        if "naver.com" in url:
+            text = _naver_article_text(url)
+            if text:
+                return text
+            logger.warning(f"[본문 없음] 네이버 셀렉터로 본문을 못 찾음: {url}")
+            # 셀렉터가 바뀐 경우를 대비해 아래 일반 경로로 넘어간다.
+
         article = Article(url, language='ko')
         article.download()
         article.parse()
