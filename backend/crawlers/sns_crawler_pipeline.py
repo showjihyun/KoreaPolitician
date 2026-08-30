@@ -16,6 +16,7 @@ from core.graph_storage import graph_storage, run_sync, close_sync
 from core.db_config import close_sync_pool, db_config_from_env, get_sync_pool
 from core.name_matcher import find_names
 from core.hotness import update_summary
+from crawlers.view_count import parse_view_count
 
 # Load environment variables
 load_dotenv(os.path.join(os.path.dirname(__file__), '../.env'))
@@ -220,7 +221,13 @@ class SNSViralityCollector:
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
-                page = browser.new_page()
+                # 로케일을 지정하지 않으면 러너 기본값(en-US)으로 응답이 와서
+                # 조회수 표기가 'K/M' 형식이 된다. 한국어로 고정한다.
+                context = browser.new_context(
+                    locale="ko-KR",
+                    extra_http_headers={"Accept-Language": "ko-KR,ko;q=0.9"},
+                )
+                page = context.new_page()
                 query = f"{name} 의원"
                 search_url = f"https://www.youtube.com/results?search_query={requests.utils.quote(query)}"
                 page.goto(search_url, timeout=60000)
@@ -265,15 +272,11 @@ class SNSViralityCollector:
                         is_news_channel = any(kw in channel_name for kw in ['TV', '뉴스', '커뮤니케이션', '방송', '정치'])
                         authority_weight = 5.0 if is_news_channel else 1.0
 
-                        meta = video.query_selector('#metadata-line').inner_text()
-                        view_count = 0
-                        if '조회수' in meta:
-                            parts = meta.split('조회수')
-                            if len(parts) > 1:
-                                v_str = parts[1].split('회')[0].strip()
-                                if '만' in v_str: view_count = int(float(v_str.replace('만','')) * 10000)
-                                elif '천' in v_str: view_count = int(float(v_str.replace('천','')) * 1000)
-                                elif v_str.replace(',','').isdigit(): view_count = int(v_str.replace(',',''))
+                        meta_el = video.query_selector('#metadata-line')
+                        meta = meta_el.inner_text() if meta_el else ""
+                        # 예전에는 '조회수' 문자열에만 의존해, en-US 로케일인 CI
+                        # 러너에서 모든 조회수가 0 이 되어 전부 버려졌다.
+                        view_count = parse_view_count(meta)
 
                         _yt_note("parsed")
                         if view_count <= 1000:
