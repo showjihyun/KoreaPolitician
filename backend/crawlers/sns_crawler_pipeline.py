@@ -1,4 +1,6 @@
 import os
+import threading
+from collections import Counter
 import time
 import json
 import logging
@@ -50,6 +52,26 @@ ENABLED_PLATFORMS = {
     if p.strip()
 }
 logger.info(f"활성 SNS 플랫폼: {sorted(ENABLED_PLATFORMS)}")
+
+# 유튜브 수집 진단용 집계. 296명을 돌면서 매번 상세 로그를 남기면 로그가
+# 뒤덮이므로, 원인 판별에 필요한 페이지 덤프는 앞쪽 몇 건만 남기고
+# 나머지는 숫자로만 센다. 파이프라인 끝에서 한 번 요약한다.
+YT_DIAG_DUMP_LIMIT = 3
+yt_stats = Counter()
+_yt_diag_lock = threading.Lock()
+
+
+def _yt_note(key, n=1):
+    with _yt_diag_lock:
+        yt_stats[key] += n
+
+
+def _yt_should_dump():
+    with _yt_diag_lock:
+        if yt_stats["dumped"] >= YT_DIAG_DUMP_LIMIT:
+            return False
+        yt_stats["dumped"] += 1
+        return True
 
 
 class SNSViralityCollector:
@@ -251,7 +273,34 @@ class SNSViralityCollector:
                 search_url = f"https://www.youtube.com/results?search_query={requests.utils.quote(query)}"
                 page.goto(search_url, timeout=60000)
 
-                videos = page.query_selector_all('ytd-video-renderer')[:5]
+                # 결과가 렌더링될 때까지 기다린다. 로컬에서는 대기 없이도
+                # 잡히지만, 느린 CI 러너에서는 타이밍 차이가 날 수 있다.
+                try:
+                    page.wait_for_selector('ytd-video-renderer', timeout=15000)
+                except Exception:
+                    _yt_note("no_renderer")
+
+                all_videos = page.query_selector_all('ytd-video-renderer')
+                _yt_note("searched")
+                _yt_note("videos_seen", len(all_videos))
+
+                if not all_videos:
+                    # 여기가 CI 에서 0건이 나오는 지점이다. 유튜브가 동의
+                    # 페이지나 봇 체크를 띄우면 이 셀렉터가 비게 된다.
+                    # 정체를 알 수 있게 앞쪽 몇 건만 페이지 단서를 남긴다.
+                    _yt_note("empty_result")
+                    if _yt_should_dump():
+                        try:
+                            title = page.title()
+                            body = (page.inner_text("body") or "")[:300].replace("\n", " ")
+                            logger.warning(
+                                f"[YT 진단] {name}: 영상 0건. url={page.url[:110]}")
+                            logger.warning(f"[YT 진단] page.title={title!r}")
+                            logger.warning(f"[YT 진단] body[:300]={body!r}")
+                        except Exception as diag_err:
+                            logger.warning(f"[YT 진단] 페이지 정보 수집 실패: {diag_err!r}")
+
+                videos = all_videos[:5]
                 for i, video in enumerate(videos):
                     try:
                         title_el = video.query_selector('#video-title')
@@ -274,6 +323,9 @@ class SNSViralityCollector:
                                 elif '천' in v_str: view_count = int(float(v_str.replace('천','')) * 1000)
                                 elif v_str.replace(',','').isdigit(): view_count = int(v_str.replace(',',''))
 
+                        _yt_note("parsed")
+                        if view_count <= 1000:
+                            _yt_note("below_threshold")
                         if view_count > 1000:
                             base_score = view_count * 0.05
                             final_score = base_score * authority_weight
@@ -287,9 +339,20 @@ class SNSViralityCollector:
                                 "engagement_data": {"views": view_count, "channel": channel_name},
                                 "hot_score": final_score
                             })
-                    except: continue
+                    except Exception as item_err:
+                        _yt_note("item_error")
+                        logger.debug(f"[YT] {name} 영상 파싱 실패: {item_err!r}")
+                        continue
                 browser.close()
-        except: pass
+        except Exception as e:
+            # 예전에는 맨 except 로 전부 삼켜서, CI 에서 0건이 나와도 원인을
+            # 알 수 없었다.
+            _yt_note("crawl_error")
+            logger.warning(f"YouTube crawl failed for {name}: {type(e).__name__}: {e}")
+
+        _yt_note("collected", len(results))
+        if not results:
+            _yt_note("member_zero")
         return results
 
     def crawl_instagram(self, name):
@@ -405,6 +468,16 @@ class SNSViralityCollector:
                         logger.info(f"Progress: [{completed}/{total}] SNS analysis in progress...")
                 except Exception as e:
                     logger.error(f"Task Error: {e}")
+        if "youtube" in ENABLED_PLATFORMS:
+            s = yt_stats
+            logger.info(
+                "[YT 요약] 검색 %d회 / 영상 발견 %d개 / 결과 0건인 의원 %d명 / "
+                "렌더러 대기실패 %d / 파싱 %d / 조회수미달 %d / 항목오류 %d / "
+                "크롤오류 %d / 최종수집 %d건",
+                s["searched"], s["videos_seen"], s["member_zero"], s["no_renderer"],
+                s["parsed"], s["below_threshold"], s["item_error"],
+                s["crawl_error"], s["collected"])
+
         self._prune_old_rows()
         logger.info("=== SNS Virality Pipeline End ===")
 
