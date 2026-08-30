@@ -62,6 +62,7 @@ SSL 은 `PGSSLMODE=require` 환경변수로 처리합니다(libpq 가 직접 읽
 | `CORS_ALLOW_ORIGINS` | 전체 허용 | 쉼표 구분 출처 목록. 프론트 도메인만 남기는 것을 권장합니다. |
 | `DB_POOL_MAX_SIZE` | 5 | 커넥션 풀 최대 크기 |
 | `SNS_RETENTION_DAYS` | 90 | 이 기간이 지난 SNS 원본 행을 크롤러가 삭제합니다 |
+| `SNS_PLATFORMS` | `youtube` | 수집할 SNS 플랫폼(쉼표 구분). 아래 참고 |
 
 3. 배포 후 `https://<서비스명>.onrender.com/health` 로 확인합니다.
 
@@ -171,6 +172,25 @@ POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=55432 POSTGRES_PASSWORD=testpw   PYTHONPAT
 
 `korea_politician_test` DB 를 따로 만들어 쓰므로 개발용 데이터는 건드리지
 않는다. PostgreSQL 에 접속할 수 없으면 전부 skip 된다.
+
+### SNS 플랫폼 (X·인스타그램 비활성)
+
+X(트위터)와 인스타그램은 2026년 8월 기준 **비로그인 수집이 막혀 있습니다.**
+첫 운영 크롤링에서 의원 296명 전원에 대해 아래가 반복됐고 수집은 0건이었습니다.
+
+```
+X crawl failed for OOO: Page.wait_for_selector: Timeout 20000ms exceeded
+  - waiting for locator("article") to be visible
+Instagram access limited for OOO (possible login required)
+```
+
+18분을 쓰고 아무것도 얻지 못하므로 기본값에서 제외했습니다. 크롤 함수
+(`crawl_x_twitter`, `crawl_instagram`)는 그대로 남아 있으니, 로그인 세션을
+붙일 수 있게 되면 환경변수만 바꾸면 됩니다.
+
+```
+SNS_PLATFORMS=youtube,x,instagram
+```
 
 ## 의존성 구조
 

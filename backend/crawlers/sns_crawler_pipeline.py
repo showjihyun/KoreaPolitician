@@ -30,6 +30,28 @@ logger = logging.getLogger(__name__)
 # POLITICIANS 명단 로드
 from crawlers.news_crawler_pipeline import POLITICIANS
 
+# 수집할 SNS 플랫폼. 쉼표로 구분해 SNS_PLATFORMS 환경변수로 바꿀 수 있다.
+#
+# X(트위터)와 인스타그램은 2026-08 기준 비로그인 수집이 막혀 있다.
+# 첫 운영 크롤링(run 33261656351)에서 의원 296명 전원에 대해 다음이 반복됐다.
+#
+#   X crawl failed for OOO: Page.wait_for_selector: Timeout 20000ms exceeded
+#     - waiting for locator("article") to be visible
+#   Instagram access limited for OOO (possible login required)
+#
+# 18분을 쓰고 수집 0건이었으므로 기본값에서 제외한다. 크롤 함수 자체는
+# 그대로 두었으므로, 로그인 세션을 붙일 수 있게 되면
+# SNS_PLATFORMS=youtube,x,instagram 으로 되살리면 된다.
+DEFAULT_SNS_PLATFORMS = "youtube"
+
+ENABLED_PLATFORMS = {
+    p.strip().lower()
+    for p in (os.getenv("SNS_PLATFORMS") or DEFAULT_SNS_PLATFORMS).split(",")
+    if p.strip()
+}
+logger.info(f"활성 SNS 플랫폼: {sorted(ENABLED_PLATFORMS)}")
+
+
 class SNSViralityCollector:
     def __init__(self):
         # 빈 문자열 환경변수(미등록 시크릿)를 미설정으로 처리한다.
@@ -319,21 +341,31 @@ class SNSViralityCollector:
         return results
 
     def run_for_name(self, name):
-        logger.info(f"SNS 화제성 분석 시작 (X/YouTube/Instagram 병렬): {name}")
+        crawlers = {
+            "x": self.crawl_x_twitter,
+            "youtube": self.crawl_youtube,
+            "instagram": self.crawl_instagram,
+        }
+        active = {k: fn for k, fn in crawlers.items() if k in ENABLED_PLATFORMS}
+        if not active:
+            logger.warning("활성화된 SNS 플랫폼이 없습니다.")
+            return
+
+        logger.info(f"SNS 화제성 분석 시작 ({'/'.join(sorted(active))}): {name}")
         all_data = []
 
-        # 의원 한 명당 3개 플랫폼을 동시에 크롤링 (성능 극대화)
-        with ThreadPoolExecutor(max_workers=3) as platform_executor:
-            task_x = platform_executor.submit(self.crawl_x_twitter, name)
-            task_yt = platform_executor.submit(self.crawl_youtube, name)
-            task_ig = platform_executor.submit(self.crawl_instagram, name)
+        # 의원 한 명당 활성 플랫폼을 동시에 크롤링
+        with ThreadPoolExecutor(max_workers=max(1, len(active))) as platform_executor:
+            tasks = {platform_executor.submit(fn, name): key
+                     for key, fn in active.items()}
 
-            for future in as_completed([task_x, task_yt, task_ig]):
+            for future in as_completed(tasks):
                 try:
                     res = future.result()
                     if res: all_data.extend(res)
                 except Exception as e:
-                    logger.error(f"Platform crawl error for {name}: {e}")
+                    logger.error(f"Platform crawl error for {name} "
+                                 f"({tasks[future]}): {e}")
 
         for d in all_data:
             self._save_to_db(d)

@@ -32,6 +32,9 @@ jobs:
       API_WRITE_TOKEN: ${{ secrets.API_WRITE_TOKEN }}
       # 커넥션 한도가 낮은 무료 DB 를 보호한다.
       DB_POOL_MAX_SIZE: "3"
+      # 수집할 SNS 플랫폼. X/인스타그램은 비로그인 수집이 막혀 제외했다.
+      # 로그인 세션을 붙일 수 있게 되면 "youtube,x,instagram" 으로 바꾼다.
+      SNS_PLATFORMS: "youtube"
 
     steps:
       - uses: actions/checkout@v4
