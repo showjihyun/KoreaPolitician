@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 import sys
 import psycopg
 from core.name_matcher import find_names
+from core.hotness import ensure_news_schema, rebuild_from_news
 from core.db_config import (api_base_url, close_sync_pool,
                             db_config_from_env, env, get_sync_pool)
 import logging
@@ -137,36 +138,6 @@ def extract_politicians(text, name_list):
 # CPU 코어의 80%를 사용하여 병렬 처리 수 결정
 MAX_WORKERS = max(1, int((os.cpu_count() or 4) * 0.8))
 logger.info(f"Setting MAX_WORKERS to {MAX_WORKERS} (80% of CPU)")
-
-def ensure_news_schema(db_config=None):
-    """news_sentiment 스키마를 준비한다. 파이프라인 시작 시 한 번만 부른다.
-
-    예전에는 save_to_postgresql 안에 DDL 이 있어 기사 한 건마다 CREATE TABLE /
-    CREATE INDEX 가 실행됐다. 분석 스레드 8개가 동시에 치면 카탈로그 잠금
-    경합이 생기고, 관리형 DB 에서는 커넥션 한도까지 겹친다.
-    """
-    with get_sync_pool().connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS public.news_sentiment (
-                    id SERIAL PRIMARY KEY,
-                    title TEXT,
-                    url TEXT,
-                    press TEXT,
-                    date TEXT,
-                    politicians TEXT,
-                    sentiment_label TEXT,
-                    sentiment_score FLOAT,
-                    content TEXT,
-                    base_date TEXT,
-                    inserted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE INDEX IF NOT EXISTS idx_news_sentiment_base_date ON public.news_sentiment (base_date);
-                -- url 유니크 제약이 없어 SELECT 후 INSERT 하는 동안 다른 스레드가
-                -- 같은 url 을 넣으면 중복 행이 생겼다. 제약을 걸고 upsert 로 바꾼다.
-                CREATE UNIQUE INDEX IF NOT EXISTS uq_news_sentiment_url ON public.news_sentiment (url);
-            """)
-
 
 def save_to_postgresql(articles, db_config=None):
     """기사들을 저장한다. 커넥션은 공유 풀에서 빌린다."""
@@ -672,6 +643,15 @@ def run_pipeline(db_config):
                 logger.error(f"Error processing article: {e}")
 
     logger.info(f"[파이프라인 실행 종료] 총 {total_saved}개 기사 처리됨")
+
+    # 수집한 뉴스로 화제성을 산출한다. X/인스타는 비로그인 수집이 막혔고
+    # 유튜브도 불안정해 화제성 테이블이 계속 비어 있었다. 뉴스 언급 빈도는
+    # 이미 안정적으로 수집되는 데이터이고 정치적 화제성의 직접적인 신호다.
+    try:
+        rebuild_from_news(datetime.now().strftime("%Y%m%d"))
+    except Exception as e:
+        logger.error(f"화제성 산출 실패: {e}")
+
     logger.info("--------------------------------------------------")
     return total_saved
 

@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from core.graph_storage import graph_storage, run_sync, close_sync
 from core.db_config import close_sync_pool, db_config_from_env, get_sync_pool
 from core.name_matcher import find_names
+from core.hotness import update_summary
 
 # Load environment variables
 load_dotenv(os.path.join(os.path.dirname(__file__), '../.env'))
@@ -89,61 +90,12 @@ class SNSViralityCollector:
             self.name_to_id[m['properties'].get('name')] = m['id']
 
     def _update_summary(self, name):
-        """의원별 화제성 정보 요약 테이블 업데이트"""
-        # 예전에는 호출마다 psycopg.connect() 로 새 커넥션 + TLS 핸드셰이크를
-        # 해서, 다중 스레드 실행 시 관리형 Postgres 의 커넥션 한도를 즉시
-        # 소진했다. 공유 풀에서 빌리고 finally 에서 반드시 반납한다.
-        pool = get_sync_pool()
-        conn = None
-        try:
-            conn = pool.getconn()
-            cur = conn.cursor()
+        """의원별 화제성 요약 갱신.
 
-            # 1. 최근 24시간 내 데이터 기반 실시간 요약 산출
-            cur.execute("""
-                SELECT
-                    SUM(hot_score) as total_score,
-                    platform,
-                    COUNT(*) as post_count
-                FROM public.politician_sns_hotness
-                WHERE member_name = %s AND collected_at > NOW() - INTERVAL '1 day'
-                GROUP BY platform
-                ORDER BY total_score DESC
-            """, (name,))
-
-            rows = cur.fetchall()
-            current_total_score = sum(r[0] for r in rows) if rows else 0
-            top_platform = rows[0][1] if rows else 'N/A'
-
-            # 2. 전체 이력 기반 누적 점수 산출
-            cur.execute("""
-                SELECT SUM(hot_score) FROM public.politician_sns_hotness
-                WHERE member_name = %s
-            """, (name,))
-            cumulative_total_score = cur.fetchone()[0] or 0
-
-            # 3. 요약 테이블 업데이트 (UPSERT)
-            cur.execute("""
-                INSERT INTO public.politician_hotness_summary
-                (member_name, current_hot_score, cumulative_hot_score, top_platform, last_updated)
-                VALUES (%s, %s, %s, %s, NOW())
-                ON CONFLICT (member_name) DO UPDATE
-                SET
-                    daily_change = %s - politician_hotness_summary.current_hot_score,
-                    current_hot_score = %s,
-                    cumulative_hot_score = %s,
-                    top_platform = %s,
-                    last_updated = NOW()
-            """, (name, current_total_score, cumulative_total_score, top_platform,
-                  current_total_score, current_total_score, cumulative_total_score, top_platform))
-
-            conn.commit()
-        except Exception as e:
-            logger.error(f"Summary Update Error for {name}: {e}")
-        finally:
-            # 예외가 나도 커넥션은 반드시 풀로 반납한다.
-            if conn is not None:
-                pool.putconn(conn)
+        집계 로직은 core.hotness 로 옮겼다. 뉴스 기반 화제성도 같은 테이블을
+        쓰므로, 두 경로가 같은 산식을 공유해야 플랫폼 간 비교가 성립한다.
+        """
+        update_summary(name)
 
     def _detect_and_save_interactions(self, source_name, text, platform, hot_score):
         """텍스트에서 다른 정치인 언급을 탐지하여 그래프 엣지로 저장"""
