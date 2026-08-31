@@ -11,8 +11,9 @@ import os
 
 import psycopg
 
-from core.hotness import (NEWS_MENTION_BASE_SCORE, PLATFORM_NEWS, _focus_weight,
-                          ensure_news_schema, rebuild_from_news, update_summary)
+from core.hotness import (NEWS_MENTION_BASE_SCORE, PLATFORM_NEWS, YOUTUBE_MAX_SCORE,
+                          _focus_weight, ensure_news_schema, rebuild_from_news,
+                          update_summary, youtube_score)
 
 try:
     import pytest
@@ -176,6 +177,42 @@ def test_update_summary_on_unknown_member_does_not_raise():
     _prepare([])
     update_summary("존재하지않는의원")   # 예외가 나면 크롤러가 죽는다
 
+
+
+def test_youtube_score_is_log_normalised():
+    """조회수를 로그로 압축해 뉴스와 같은 0~100 스케일에 맞춘다.
+
+    예전에는 `조회수 x 0.05` 를 그대로 써서 점수가 100만 단위까지 나왔고,
+    뉴스 평균 54점 대비 300배 차이로 화제성 순위를 유튜브가 독점했다
+    (점수 있는 274명 중 269명의 top_platform 이 YouTube).
+    """
+    assert youtube_score(1_000) == 0.0            # 채택 임계값 = 0점
+    assert youtube_score(10_000) == 25.0
+    assert youtube_score(100_000) == 50.0
+    assert youtube_score(1_000_000) == 75.0
+    assert youtube_score(10_000_000) == YOUTUBE_MAX_SCORE
+
+
+def test_youtube_score_is_bounded():
+    """극단값에서도 범위를 벗어나지 않아야 한다."""
+    assert youtube_score(500) == 0.0              # 임계값 미만
+    assert youtube_score(0) == 0.0
+    assert youtube_score(None) == 0.0
+    assert youtube_score(10_000_000_000) == YOUTUBE_MAX_SCORE   # 상한 고정
+
+
+def test_youtube_and_news_are_comparable():
+    """두 플랫폼 점수가 같은 자릿수여야 합산이 의미를 갖는다."""
+    top_video = youtube_score(10_000_000)
+    solo_article = NEWS_MENTION_BASE_SCORE
+    assert 0.2 <= top_video / solo_article <= 5.0, (top_video, solo_article)
+
+
+def test_authority_weight_applies_after_normalisation():
+    """채널 가중치는 정규화 뒤에 곱해야 스케일이 폭주하지 않는다."""
+    assert youtube_score(1_000_000, 5.0) == 375.0
+    # 가중치를 줘도 뉴스 한 건(100점)의 수십 배를 넘지 않는다
+    assert youtube_score(50_000_000, 5.0) <= YOUTUBE_MAX_SCORE * 5
 
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

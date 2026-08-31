@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from core.graph_storage import graph_storage, run_sync, close_sync
 from core.db_config import close_sync_pool, db_config_from_env, get_sync_pool
 from core.name_matcher import find_names
-from core.hotness import update_summary
+from core.hotness import update_summary, youtube_score
 from crawlers.view_count import parse_view_count
 
 # Load environment variables
@@ -196,6 +196,10 @@ class SNSViralityCollector:
 
                         if rt_count > 5 or like_count > 20:
                             # 기본 점수에 인플루언서 가중치 적용
+                            # NOTE: 이 점수는 정규화되지 않았다. X 를 다시 켜기
+                            # 전에 core.hotness 의 0~100 스케일에 맞춰야 한다.
+                            # 그렇지 않으면 유튜브가 그랬듯 화제성 순위를
+                            # 이 플랫폼 혼자 좌우하게 된다.
                             base_score = (rt_count * 2.5) + (like_count * 1.0)
                             final_score = base_score * authority_weight
 
@@ -282,8 +286,11 @@ class SNSViralityCollector:
                         if view_count <= 1000:
                             _yt_note("below_threshold")
                         if view_count > 1000:
-                            base_score = view_count * 0.05
-                            final_score = base_score * authority_weight
+                            # 예전에는 조회수에 0.05 를 곱해 그대로 썼다. 조회수가
+                            # 수십만~수백만이라 점수가 100만 단위까지 나왔고,
+                            # 뉴스(평균 54점)와 300배 차이가 나 화제성 순위가
+                            # 사실상 유튜브만 반영했다. 로그로 압축해 정규화한다.
+                            final_score = youtube_score(view_count, authority_weight)
 
                             results.append({
                                 "member_name": name,

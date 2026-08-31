@@ -22,12 +22,46 @@ from core.db_config import get_sync_pool
 
 logger = logging.getLogger(__name__)
 
-# 뉴스 언급 1건의 기본 점수.
-# 유튜브 점수(조회수 x 0.05 x 채널가중치)가 수천 단위라, 같은 테이블에서
-# 비교되도록 스케일을 맞춘 값이다.
+# --- 점수 스케일 ---------------------------------------------------------
+# 뉴스와 유튜브 점수는 같은 테이블(politician_sns_hotness)에서 합산·비교되므로
+# 반드시 같은 스케일이어야 한다. 기준을 여기 한 곳에 모아 둔다.
+#
+#   기사 1건 = 최대 100점 (단독 기사)
+#   영상 1건 = 최대 100점 (1천만 조회)
+#
+# 처음에는 유튜브를 `조회수 x 0.05 x 채널가중치` 로 계산했는데, 실측해 보니
+# 조회수가 수십만~수백만이라 점수가 100만 단위까지 나왔다. 뉴스 평균 54점,
+# 유튜브 평균 17,779점으로 300배 차이가 생겨, 화제성 순위가 사실상 유튜브
+# 조회수만 반영했다(점수 있는 274명 중 269명의 top_platform 이 YouTube).
+# 조회수 분포는 로그정규에 가까우므로 로그로 압축해 정규화한다.
 NEWS_MENTION_BASE_SCORE = 100.0
 
+YOUTUBE_MAX_SCORE = 100.0
+YOUTUBE_LOG_FLOOR = 3.0   # 10^3 = 1,000회 -> 0점 (크롤러의 채택 임계값과 동일)
+YOUTUBE_LOG_CEIL = 7.0    # 10^7 = 1천만회 -> 100점
+
 PLATFORM_NEWS = "News"
+PLATFORM_YOUTUBE = "YouTube"
+
+
+def youtube_score(view_count: int, authority_weight: float = 1.0) -> float:
+    """유튜브 조회수를 뉴스와 같은 스케일(0~100)로 환산한다.
+
+        1천회    ->   0점
+        1만회    ->  25점
+        10만회   ->  50점
+        100만회  ->  75점
+        1천만회  -> 100점
+
+    authority_weight 는 대형 정치/뉴스 채널 가중치다. 정규화 뒤에 곱하므로
+    스케일이 폭주하지 않는다.
+    """
+    if view_count is None or view_count <= 0:
+        return 0.0
+    exponent = math.log10(view_count)
+    ratio = (exponent - YOUTUBE_LOG_FLOOR) / (YOUTUBE_LOG_CEIL - YOUTUBE_LOG_FLOOR)
+    normalized = max(0.0, min(1.0, ratio)) * YOUTUBE_MAX_SCORE
+    return round(normalized * authority_weight, 2)
 
 
 def ensure_news_schema(db_config=None):
