@@ -153,8 +153,12 @@ async def graph_all(limit: int = Query(350, ge=1, le=1000)):
             nodes.append(member)
             node_ids.add(member_id)
         
-        # 각 의원의 관계 추가
+        # 각 의원의 관계 추가.
+        # 응답 크기를 위해 의원당 10개로 자르는데, 순서대로 자르면 호불호
+        # 관계가 소속/지역/SNS 언급에 밀려 잘려 나간다. 이 화면의 핵심은
+        # 호불호이므로 감정 관계를 먼저 담는다.
         rels = graph_storage.get_relationships(member_id, direction="out")
+        rels.sort(key=lambda r: 0 if r["edge"]["type"].endswith("_SENTIMENT") else 1)
         for rel in rels[:10]:  # 각 의원당 최대 10개 관계
             relationships.append(rel["edge"])
             if rel["node"] and rel["node"]["id"] not in node_ids:
