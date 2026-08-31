@@ -21,3 +21,8 @@ node_modules/
 
 # 프론트엔드는 별도 저장소에서 관리 (showjihyun/frontend)
 frontend/
+
+# 실제 값이 담긴 환경 파일은 추적하지 않는다. 키 목록은 .env.example 에 둔다.
+.env
+.env.*
+!.env.example
