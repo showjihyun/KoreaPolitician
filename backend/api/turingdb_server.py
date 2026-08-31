@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 import os
 from core.graph_storage import graph_storage
 from core.db_config import db_config_from_env, env
-from scripts.simple_importer import SimpleImporter
+from scripts.simple_importer import SimpleImporter, sync_member_profiles
 from core.image_manager import image_manager
 import logging
 from collections import deque
@@ -32,6 +32,12 @@ async def lifespan(app: FastAPI):
         async with graph_storage.batch():
             await importer.import_data(json_file)
         logging.info("Data loaded successfully!")
+    elif os.path.exists(json_file):
+        # 이미 데이터가 있는 DB 는 재임포트되지 않으므로, 나중에 추가된
+        # 프로필 필드(홈페이지·국회 프로필·경력 등)를 여기서 보강한다.
+        updated = await sync_member_profiles(json_file)
+        if updated:
+            logging.info(f"의원 프로필 {updated}명 보강")
 
     yield
 

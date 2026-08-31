@@ -4,8 +4,57 @@
 """
 
 import json
+import os
 import re
 from core.graph_storage import graph_storage
+
+
+# 노드에 함께 담을 프로필 필드. 화면의 프로필 팝업이 이 값들을 쓴다.
+PROFILE_FIELDS = (
+    "hjNm", "engNm", "bthDate", "telNo", "eMail",
+    "homepage", "linkUrl", "staff", "secretary", "secretary2",
+)
+
+
+def profile_fields(member: dict) -> dict:
+    """의원 원본 레코드에서 프로필 필드만 뽑는다. 없는 값은 빈 문자열."""
+    out = {key: (member.get(key) or "") for key in PROFILE_FIELDS}
+    careers = member.get("careers") or []
+    if isinstance(careers, str):
+        careers = [careers]
+    # 경력은 최근 8개만. 노드 properties 가 지나치게 커지면 그래프 응답이 무거워진다.
+    out["careers"] = [str(c) for c in careers][:8]
+    return out
+
+
+async def sync_member_profiles(json_file: str) -> int:
+    """이미 적재된 의원 노드에 프로필 필드를 채워 넣는다.
+
+    프로필 필드는 원본 JSON 에 계속 있었지만 노드에 담기지 않았다. 최초
+    임포트는 노드가 하나도 없을 때만 도므로, 이미 데이터가 있는 DB 는
+    재임포트 없이 이 경로로 보강한다. 값이 이미 같으면 아무 것도 하지 않는다.
+    """
+    if not os.path.exists(json_file):
+        return 0
+
+    with open(json_file, "r", encoding="utf-8") as f:
+        records = json.load(f)
+    by_name = {m.get("name"): m for m in records if m.get("name")}
+
+    pending = []
+    for node in graph_storage.find_nodes("Member"):
+        source = by_name.get(node["properties"].get("name"))
+        if not source:
+            continue
+        fields = profile_fields(source)
+        if all(node["properties"].get(k) == v for k, v in fields.items()):
+            continue
+        merged = {**node["properties"], **fields}
+        pending.append((node["id"], node["labels"], merged))
+
+    if pending:
+        await graph_storage.add_nodes_bulk(pending)
+    return len(pending)
 
 
 class SimpleImporter:
@@ -130,7 +179,10 @@ class SimpleImporter:
                     "election_method": member.get("election_method", ""),
                     "photo_url": member.get("photo_url", ""),
                     "photo_filename": member.get("photo_filename", ""),
-                    "monaCd": member.get("monaCd", "")
+                    "monaCd": member.get("monaCd", ""),
+                    # 프로필 상세. 원본 JSON 에는 있는데 그동안 노드에 담기지
+                    # 않아 화면에서 쓸 수 없었다.
+                    **profile_fields(member),
                 }
             )
             
