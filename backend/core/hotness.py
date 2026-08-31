@@ -16,6 +16,7 @@ politician_sns_hotness 는 플랫폼 무관 구조라 platform='News' 로 넣으
 import hashlib
 import logging
 import math
+from datetime import datetime
 from typing import Dict, Iterable, List, Sequence
 
 from core.db_config import get_sync_pool
@@ -244,6 +245,39 @@ def update_summary(name: str) -> None:
             pool.putconn(conn)
 
 
+def mark_data_updated(when: str = None) -> None:
+    """system_settings.last_data_update 를 갱신한다.
+
+    /api/stats 의 last_updated 가 이 값을 읽는데, 지금까지는 run_news_sns.py
+    (우리가 CI 에서 쓰지 않는 데몬)만 갱신해서 값이 멈춰 있었다. 화면에
+    "데이터 기준 시각" 을 보여주려면 실제 수집 시점이 들어가야 한다.
+    """
+    stamp = when or datetime.now().strftime("%Y-%m-%d")
+    pool = get_sync_pool()
+    conn = None
+    try:
+        conn = pool.getconn()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO system_settings (key, value, updated_at)
+                VALUES ('last_data_update', %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (key) DO UPDATE
+                SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
+                """,
+                (stamp,),
+            )
+        conn.commit()
+        logger.info(f"[화제성] 데이터 기준일 갱신: {stamp}")
+    except Exception as exc:                                   # noqa: BLE001
+        if conn is not None:
+            conn.rollback()
+        logger.error(f"[화제성] 기준일 갱신 실패: {exc}")
+    finally:
+        if conn is not None:
+            pool.putconn(conn)
+
+
 def refresh_summaries(names: Iterable[str]) -> int:
     """여러 의원의 요약을 갱신한다."""
     unique = sorted({n for n in names if n})
@@ -277,4 +311,5 @@ def rebuild_from_news(base_date: str) -> int:
             pool.putconn(conn)
 
     refresh_summaries(names)
+    mark_data_updated()
     return recorded
