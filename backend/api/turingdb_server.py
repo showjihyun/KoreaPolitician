@@ -114,9 +114,23 @@ async def graph_all(limit: int = Query(350, ge=1, le=1000)):
     try:
         async with graph_storage.connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute("SELECT member_name, current_hot_score, top_platform FROM public.politician_hotness_summary")
+                # 화제성은 뉴스와 유튜브를 합친 값이다. 총점만 주면 화면에서
+                # "종합" 이라는 사실이 드러나지 않으므로 플랫폼별 소계도 함께 준다.
+                await cur.execute("""
+                    SELECT s.member_name, s.current_hot_score, s.top_platform,
+                           COALESCE(SUM(h.hot_score) FILTER (WHERE h.platform = 'News'), 0),
+                           COALESCE(SUM(h.hot_score) FILTER (WHERE h.platform = 'YouTube'), 0)
+                    FROM public.politician_hotness_summary s
+                    LEFT JOIN public.politician_sns_hotness h
+                           ON h.member_name = s.member_name
+                          AND h.collected_at > NOW() - INTERVAL '1 day'
+                    GROUP BY s.member_name, s.current_hot_score, s.top_platform
+                """)
                 for r in await cur.fetchall():
-                    hotness_map[r[0]] = {"score": r[1], "platform": r[2]}
+                    hotness_map[r[0]] = {
+                        "score": r[1], "platform": r[2],
+                        "news": float(r[3] or 0), "youtube": float(r[4] or 0),
+                    }
     except Exception as e:
         logging.warning(f"hotness summary 조회 실패: {e}")
 
@@ -129,9 +143,11 @@ async def graph_all(limit: int = Query(350, ge=1, le=1000)):
             member["properties"]["image_url"] = f"/api/images/{name}.jpg"
             member["properties"]["thumbnail_url"] = f"/api/images/{name}.jpg?thumbnail=true"
             # SNS 화제성 점수 통합
-            hot_info = hotness_map.get(name, {"score": 0, "platform": None})
+            hot_info = hotness_map.get(name, {"score": 0, "platform": None, "news": 0, "youtube": 0})
             member["properties"]["hot_score"] = hot_info["score"]
             member["properties"]["hot_platform"] = hot_info["platform"]
+            member["properties"]["hot_news"] = hot_info.get("news", 0)
+            member["properties"]["hot_youtube"] = hot_info.get("youtube", 0)
         
         if member_id not in node_ids:
             nodes.append(member)
@@ -148,9 +164,11 @@ async def graph_all(limit: int = Query(350, ge=1, le=1000)):
                     if rel_name:
                         rel["node"]["properties"]["image_url"] = f"/api/images/{rel_name}.jpg"
                         rel["node"]["properties"]["thumbnail_url"] = f"/api/images/{rel_name}.jpg?thumbnail=true"
-                        hot_info = hotness_map.get(rel_name, {"score": 0, "platform": None})
+                        hot_info = hotness_map.get(rel_name, {"score": 0, "platform": None, "news": 0, "youtube": 0})
                         rel["node"]["properties"]["hot_score"] = hot_info["score"]
                         rel["node"]["properties"]["hot_platform"] = hot_info["platform"]
+                        rel["node"]["properties"]["hot_news"] = hot_info.get("news", 0)
+                        rel["node"]["properties"]["hot_youtube"] = hot_info.get("youtube", 0)
                 nodes.append(rel["node"])
                 node_ids.add(rel["node"]["id"])
     
@@ -181,9 +199,23 @@ async def graph(member_name: str, depth: int = Query(2, ge=1, le=5)):
     try:
         async with graph_storage.connection() as conn:
             async with conn.cursor() as cur:
-                await cur.execute("SELECT member_name, current_hot_score, top_platform FROM public.politician_hotness_summary")
+                # 화제성은 뉴스와 유튜브를 합친 값이다. 총점만 주면 화면에서
+                # "종합" 이라는 사실이 드러나지 않으므로 플랫폼별 소계도 함께 준다.
+                await cur.execute("""
+                    SELECT s.member_name, s.current_hot_score, s.top_platform,
+                           COALESCE(SUM(h.hot_score) FILTER (WHERE h.platform = 'News'), 0),
+                           COALESCE(SUM(h.hot_score) FILTER (WHERE h.platform = 'YouTube'), 0)
+                    FROM public.politician_hotness_summary s
+                    LEFT JOIN public.politician_sns_hotness h
+                           ON h.member_name = s.member_name
+                          AND h.collected_at > NOW() - INTERVAL '1 day'
+                    GROUP BY s.member_name, s.current_hot_score, s.top_platform
+                """)
                 for r in await cur.fetchall():
-                    hotness_map[r[0]] = {"score": r[1], "platform": r[2]}
+                    hotness_map[r[0]] = {
+                        "score": r[1], "platform": r[2],
+                        "news": float(r[3] or 0), "youtube": float(r[4] or 0),
+                    }
     except Exception as e:
         logging.warning(f"hotness summary 조회 실패: {e}")
 
@@ -194,9 +226,11 @@ async def graph(member_name: str, depth: int = Query(2, ge=1, le=5)):
             if name:
                 node["properties"]["image_url"] = f"/api/images/{name}.jpg"
                 node["properties"]["thumbnail_url"] = f"/api/images/{name}.jpg?thumbnail=true"
-                hot_info = hotness_map.get(name, {"score": 0, "platform": None})
+                hot_info = hotness_map.get(name, {"score": 0, "platform": None, "news": 0, "youtube": 0})
                 node["properties"]["hot_score"] = hot_info["score"]
                 node["properties"]["hot_platform"] = hot_info["platform"]
+                node["properties"]["hot_news"] = hot_info.get("news", 0)
+                node["properties"]["hot_youtube"] = hot_info.get("youtube", 0)
     
     return JSONResponse(content=data)
 
