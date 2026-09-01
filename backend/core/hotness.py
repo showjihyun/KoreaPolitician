@@ -35,6 +35,10 @@ logger = logging.getLogger(__name__)
 # 유튜브 평균 17,779점으로 300배 차이가 생겨, 화제성 순위가 사실상 유튜브
 # 조회수만 반영했다(점수 있는 274명 중 269명의 top_platform 이 YouTube).
 # 조회수 분포는 로그정규에 가까우므로 로그로 압축해 정규화한다.
+# 화제성 순위가 바라보는 기간. 호불호 관계는 수집 시작부터 누적이지만,
+# 화제성은 "지금 누가 회자되는가" 라서 최근 구간만 본다.
+TREND_DAYS = 7
+
 NEWS_MENTION_BASE_SCORE = 100.0
 
 YOUTUBE_MAX_SCORE = 100.0
@@ -192,7 +196,9 @@ def record_news_hotness(base_date: str) -> int:
 def update_summary(name: str) -> None:
     """의원 한 명의 요약 테이블(politician_hotness_summary)을 갱신한다.
 
-    최근 24시간을 현재 점수로, 전체 이력을 누적 점수로 쓴다.
+    최근 일주일을 현재 점수로, 전체 이력을 누적 점수로 쓴다.
+    하루로 끊으면 수집이 하루 밀릴 때마다 순위가 통째로 비었다. 뉴스는
+    주 단위로 오르내리는 주제가 많아 일주일이 흐름을 더 잘 보여 준다.
     플랫폼과 무관하게 동작하므로 뉴스·유튜브가 함께 집계된다.
     """
     pool = get_sync_pool()
@@ -204,11 +210,12 @@ def update_summary(name: str) -> None:
                 """
                 SELECT SUM(hot_score) AS total_score, platform, COUNT(*) AS post_count
                 FROM public.politician_sns_hotness
-                WHERE member_name = %s AND collected_at > NOW() - INTERVAL '1 day'
+                WHERE member_name = %s
+                  AND collected_at > NOW() - (%s * INTERVAL '1 day')
                 GROUP BY platform
                 ORDER BY total_score DESC
                 """,
-                (name,),
+                (name, TREND_DAYS),
             )
             rows = cur.fetchall()
             current_total = sum(r[0] for r in rows) if rows else 0
@@ -301,9 +308,10 @@ def rebuild_from_news(base_date: str) -> int:
             cur.execute(
                 """
                 SELECT DISTINCT member_name FROM public.politician_sns_hotness
-                WHERE platform = %s AND collected_at > NOW() - INTERVAL '1 day'
+                WHERE platform = %s
+                  AND collected_at > NOW() - (%s * INTERVAL '1 day')
                 """,
-                (PLATFORM_NEWS,),
+                (PLATFORM_NEWS, TREND_DAYS),
             )
             names = [r[0] for r in cur.fetchall()]
     finally:

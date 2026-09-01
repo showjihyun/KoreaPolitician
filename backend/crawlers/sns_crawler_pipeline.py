@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import requests
 import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import parse_qs, urlparse
 from playwright.sync_api import sync_playwright
 import psycopg
 from psycopg.types.json import Jsonb
@@ -46,6 +47,34 @@ from crawlers.news_crawler_pipeline import POLITICIANS
 # 18분을 쓰고 수집 0건이었으므로 기본값에서 제외한다. 크롤 함수 자체는
 # 그대로 두었으므로, 로그인 세션을 붙일 수 있게 되면
 # SNS_PLATFORMS=youtube,x,instagram 으로 되살리면 된다.
+def _watch_url(href):
+    """유튜브 검색 결과의 상대 경로를 절대 주소로 바꾼다.
+
+    href 는 보통 '/watch?v=XXXX&pp=...' 로 온다. 추적용 뒷가지는 떼고
+    영상 자체만 가리키게 남긴다. 못 알아보면 None 을 준다.
+    """
+    if not href:
+        return None
+    parsed = urlparse(href if href.startswith("http") else "https://www.youtube.com" + href)
+    if parsed.netloc and "youtube.com" not in parsed.netloc:
+        return None
+    vid = parse_qs(parsed.query).get("v", [None])[0]
+    return f"https://www.youtube.com/watch?v={vid}" if vid else None
+
+
+def _video_post_id(url, title):
+    """영상 식별자. 주소가 있으면 영상 id 를, 없으면 제목 해시를 쓴다.
+
+    제목 해시는 채널이 제목을 고치면 다른 영상으로 잡혀 중복이 쌓인다.
+    영상 id 가 있으면 그쪽이 안정적이다.
+    """
+    if url:
+        vid = parse_qs(urlparse(url).query).get("v", [None])[0]
+        if vid:
+            return f"yt_{vid}"
+    return f"yt_{hashlib.md5(title.encode()).hexdigest()[:10]}"
+
+
 DEFAULT_SNS_PLATFORMS = "youtube"
 
 ENABLED_PLATFORMS = {
@@ -270,6 +299,9 @@ class SNSViralityCollector:
                         channel_el = video.query_selector('#channel-info #text')
                         if not title_el: continue
                         title = title_el.inner_text()
+                        # 화면에서 기사·영상을 눌렀을 때 원문으로 나갈 주소.
+                        # #video-title 자체가 /watch?v=... 를 가리키는 <a> 다.
+                        video_url = _watch_url(title_el.get_attribute('href'))
                         channel_name = channel_el.inner_text() if channel_el else "Unknown"
 
                         # 특정 대형 정치 채널 가중치 (예시)
@@ -296,9 +328,13 @@ class SNSViralityCollector:
                                 "member_name": name,
                                 "platform": "YouTube",
                                 "author_type": "Organization" if is_news_channel else "Influencer",
-                                "post_id": f"yt_{hashlib.md5(title.encode()).hexdigest()[:10]}",
+                                "post_id": _video_post_id(video_url, title),
                                 "content_preview": f"[{channel_name}] {title}",
-                                "engagement_data": {"views": view_count, "channel": channel_name},
+                                "engagement_data": {
+                                    "views": view_count,
+                                    "channel": channel_name,
+                                    "url": video_url,
+                                },
                                 "hot_score": final_score
                             })
                     except Exception as item_err:

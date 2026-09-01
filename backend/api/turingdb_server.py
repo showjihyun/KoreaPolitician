@@ -344,6 +344,45 @@ async def add_edge(req: EdgeRequest, _auth: None = Depends(require_write_token))
     
     return JSONResponse(content={"message": "Edge added", "edge": edge})
 
+@app.get('/api/periods')
+async def periods():
+    """화면이 보여 주는 값들이 어느 기간을 근거로 하는지 알려 준다.
+
+    호불호 관계는 수집을 시작한 날부터 지금까지 쌓인 전부다. 한 번 확인된
+    관계는 지우지 않는다. 화제성은 "지금 누가 회자되는가" 라서 최근
+    일주일만 본다.
+    """
+    from core.hotness import TREND_DAYS
+
+    try:
+        async with graph_storage.connection() as conn:
+            async with conn.cursor() as cur:
+                # 수집을 언제 시작했는지. 관계 로그와 화제성 기록 중 이른 쪽.
+                await cur.execute("""
+                    SELECT LEAST(
+                        (SELECT MIN(timestamp) FROM turing_logs),
+                        (SELECT MIN(collected_at) FROM public.politician_sns_hotness)
+                    ),
+                    (SELECT MAX(collected_at) FROM public.politician_sns_hotness)
+                """)
+                row = await cur.fetchone()
+        started, latest = (row or (None, None))
+        return JSONResponse(content={
+            "sentiment": {
+                "mode": "cumulative",
+                "from": started.strftime("%Y-%m-%d") if started else None,
+                "to": latest.strftime("%Y-%m-%d") if latest else None,
+            },
+            "trend": {
+                "mode": "rolling",
+                "days": TREND_DAYS,
+                "to": latest.strftime("%Y-%m-%d") if latest else None,
+            },
+        })
+    except Exception as e:                                     # noqa: BLE001
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
 @app.get('/api/stats')
 async def stats():
     """통계 정보"""
