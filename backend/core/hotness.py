@@ -35,10 +35,6 @@ logger = logging.getLogger(__name__)
 # 유튜브 평균 17,779점으로 300배 차이가 생겨, 화제성 순위가 사실상 유튜브
 # 조회수만 반영했다(점수 있는 274명 중 269명의 top_platform 이 YouTube).
 # 조회수 분포는 로그정규에 가까우므로 로그로 압축해 정규화한다.
-# 화제성 순위가 바라보는 기간. 호불호 관계는 수집 시작부터 누적이지만,
-# 화제성은 "지금 누가 회자되는가" 라서 최근 구간만 본다.
-TREND_DAYS = 7
-
 NEWS_MENTION_BASE_SCORE = 100.0
 
 YOUTUBE_MAX_SCORE = 100.0
@@ -47,6 +43,16 @@ YOUTUBE_LOG_CEIL = 7.0    # 10^7 = 1천만회 -> 100점
 
 PLATFORM_NEWS = "News"
 PLATFORM_YOUTUBE = "YouTube"
+
+
+# --- 집계 기간 -------------------------------------------------------------
+# 호불호 관계는 수집 시작부터 누적이지만, 화제성은 "지금 누가 회자되는가" 라서
+# 최근 구간만 본다. 하루로 끊으면 수집이 하루 밀릴 때마다 순위가 통째로 비었고,
+# 주 단위로 오르내리는 주제는 흐름이 안 보였다.
+#
+# 이 값을 읽는 쪽(요약 갱신, 순위 API, 최근 언급 API)이 모두 같은 창을 써야
+# 한다. 한 곳만 넓히면 화면에 제 합과 안 맞는 숫자가 나간다.
+TREND_DAYS = 7
 
 
 def youtube_score(view_count: int, authority_weight: float = 1.0) -> float:
@@ -233,6 +239,8 @@ def update_summary(name: str) -> None:
                     (member_name, current_hot_score, cumulative_hot_score, top_platform, last_updated)
                 VALUES (%s, %s, %s, %s, NOW())
                 ON CONFLICT (member_name) DO UPDATE SET
+                    -- 집계 창이 일주일이라, 이 값은 하루치 증감이 아니라
+                    -- 하루 어긋난 두 주간 합계의 차다. 아직 읽는 곳이 없다.
                     daily_change = %s - politician_hotness_summary.current_hot_score,
                     current_hot_score = %s,
                     cumulative_hot_score = %s,

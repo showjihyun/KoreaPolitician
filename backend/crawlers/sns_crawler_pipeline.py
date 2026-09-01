@@ -47,35 +47,48 @@ from crawlers.news_crawler_pipeline import POLITICIANS
 # 18분을 쓰고 수집 0건이었으므로 기본값에서 제외한다. 크롤 함수 자체는
 # 그대로 두었으므로, 로그인 세션을 붙일 수 있게 되면
 # SNS_PLATFORMS=youtube,x,instagram 으로 되살리면 된다.
-def _watch_url(href):
-    """유튜브 검색 결과의 상대 경로를 절대 주소로 바꾼다.
+DEFAULT_SNS_PLATFORMS = "youtube"
 
-    href 는 보통 '/watch?v=XXXX&pp=...' 로 온다. 추적용 뒷가지는 떼고
-    영상 자체만 가리키게 남긴다. 못 알아보면 None 을 준다.
+
+# 유튜브가 내주는 주소로 인정할 호스트. 부분 일치로 검사하면
+# youtube.com.attacker.example 같은 흉내 도메인이 통과한다.
+_YT_HOSTS = frozenset((
+    "youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be",
+))
+
+
+def video_id(href):
+    """검색 결과의 링크에서 영상 id 를 뽑는다. 못 알아보면 None.
+
+    href 는 보통 '/watch?v=XXXX&pp=...' 로 오지만 절대 주소나 youtu.be
+    단축 주소로 올 때도 있다. 추적용 뒷가지는 버린다.
     """
     if not href:
         return None
     parsed = urlparse(href if href.startswith("http") else "https://www.youtube.com" + href)
-    if parsed.netloc and "youtube.com" not in parsed.netloc:
+    if parsed.netloc and parsed.netloc.lower() not in _YT_HOSTS:
         return None
-    vid = parse_qs(parsed.query).get("v", [None])[0]
+    if parsed.netloc.lower() == "youtu.be":
+        vid = parsed.path.lstrip("/").split("/")[0]
+    else:
+        vid = parse_qs(parsed.query).get("v", [None])[0]
+    return vid or None
+
+
+def watch_url(vid):
+    """영상 id 를 정규 시청 주소로 만든다."""
     return f"https://www.youtube.com/watch?v={vid}" if vid else None
 
 
-def _video_post_id(url, title):
-    """영상 식별자. 주소가 있으면 영상 id 를, 없으면 제목 해시를 쓴다.
+def video_post_id(vid, title):
+    """영상 식별자. id 가 있으면 그것을, 없으면 제목 해시를 쓴다.
 
     제목 해시는 채널이 제목을 고치면 다른 영상으로 잡혀 중복이 쌓인다.
     영상 id 가 있으면 그쪽이 안정적이다.
     """
-    if url:
-        vid = parse_qs(urlparse(url).query).get("v", [None])[0]
-        if vid:
-            return f"yt_{vid}"
+    if vid:
+        return f"yt_{vid}"
     return f"yt_{hashlib.md5(title.encode()).hexdigest()[:10]}"
-
-
-DEFAULT_SNS_PLATFORMS = "youtube"
 
 ENABLED_PLATFORMS = {
     p.strip().lower()
@@ -299,9 +312,22 @@ class SNSViralityCollector:
                         channel_el = video.query_selector('#channel-info #text')
                         if not title_el: continue
                         title = title_el.inner_text()
-                        # 화면에서 기사·영상을 눌렀을 때 원문으로 나갈 주소.
-                        # #video-title 자체가 /watch?v=... 를 가리키는 <a> 다.
-                        video_url = _watch_url(title_el.get_attribute('href'))
+                        # 화면에서 영상을 눌렀을 때 원문으로 나갈 주소.
+                        # DOM 판본에 따라 #video-title 이 <a> 이기도 하고,
+                        # <a id="video-title-link"> 안의 문자열이기도 하다.
+                        # 어느 쪽이든 잡히게 후보를 차례로 본다.
+                        vid = video_id(title_el.get_attribute('href'))
+                        if not vid:
+                            for sel in ('a#video-title-link', 'a#video-title', 'a[href*="watch?v="]'):
+                                el = video.query_selector(sel)
+                                vid = el and video_id(el.get_attribute('href'))
+                                if vid:
+                                    break
+                        if not vid:
+                            # 조용히 제목 해시로 떨어지면 제목이 바뀔 때마다
+                            # 중복이 쌓인다. 눈에 보이게 센다.
+                            _yt_note("no_href")
+                        video_url = watch_url(vid)
                         channel_name = channel_el.inner_text() if channel_el else "Unknown"
 
                         # 특정 대형 정치 채널 가중치 (예시)
@@ -328,7 +354,7 @@ class SNSViralityCollector:
                                 "member_name": name,
                                 "platform": "YouTube",
                                 "author_type": "Organization" if is_news_channel else "Influencer",
-                                "post_id": _video_post_id(video_url, title),
+                                "post_id": video_post_id(vid, title),
                                 "content_preview": f"[{channel_name}] {title}",
                                 "engagement_data": {
                                     "views": view_count,
@@ -476,8 +502,49 @@ class SNSViralityCollector:
                 s["parsed"], s["below_threshold"], s["item_error"],
                 s["crawl_error"], s["collected"])
 
+        self._drop_legacy_youtube_dupes()
         self._prune_old_rows()
         logger.info("=== SNS Virality Pipeline End ===")
+
+    def _drop_legacy_youtube_dupes(self):
+        """제목 해시로 저장돼 있던 옛 유튜브 행을 지운다.
+
+        post_id 를 제목 해시에서 영상 id 로 바꾸면서, 같은 영상이 옛 키와 새
+        키로 두 줄 남는다. UNIQUE 는 (member_name, platform, post_id) 라 upsert
+        가 막아 주지 못한다. 그대로 두면 그 영상 점수가 두 번 더해져 일주일
+        동안 순위를, 90일 동안 누적 점수를 부풀린다.
+
+        옛 키는 md5 앞 10자리라 'yt_' + 소문자 16진수 10자다. 영상 id 는 11자
+        이므로 길이만으로 갈린다. 같은 의원·같은 제목의 새 행이 실제로 들어온
+        경우에만 지운다. 새로 수집되지 않은 옛 기록까지 날리지 않는다.
+        """
+        try:
+            pool = get_sync_pool()
+            conn = pool.getconn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        DELETE FROM public.politician_sns_hotness old
+                        WHERE old.platform = 'YouTube'
+                          AND old.post_id ~ '^yt_[0-9a-f]{10}$'
+                          AND EXISTS (
+                              SELECT 1 FROM public.politician_sns_hotness fresh
+                              WHERE fresh.member_name = old.member_name
+                                AND fresh.platform = 'YouTube'
+                                AND fresh.post_id !~ '^yt_[0-9a-f]{10}$'
+                                AND fresh.content_preview = old.content_preview
+                          )
+                        """
+                    )
+                    deleted = cur.rowcount
+                conn.commit()
+                if deleted:
+                    logger.info(f"옛 키로 남아 있던 유튜브 중복 {deleted}건 삭제")
+            finally:
+                pool.putconn(conn)
+        except Exception as exc:                               # noqa: BLE001
+            logger.warning(f"유튜브 중복 정리 실패: {exc!r}")
 
     def _prune_old_rows(self):
         """오래된 화제성 행을 지운다.

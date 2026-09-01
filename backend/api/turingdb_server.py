@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 from core.graph_storage import graph_storage
+from core.hotness import TREND_DAYS
 from core.db_config import db_config_from_env, env
 from scripts.simple_importer import SimpleImporter, sync_member_profiles
 from core.image_manager import image_manager
@@ -122,6 +123,9 @@ async def graph_all(limit: int = Query(350, ge=1, le=1000)):
             async with conn.cursor() as cur:
                 # 화제성은 뉴스와 유튜브를 합친 값이다. 총점만 주면 화면에서
                 # "종합" 이라는 사실이 드러나지 않으므로 플랫폼별 소계도 함께 준다.
+                # 소계는 총점과 반드시 같은 기간을 봐야 한다. 예전에는 총점만
+                # 7일로 넓히고 여기가 1일로 남아, 화면에 '종합 700 / 뉴스 100
+                # / 유튜브 0' 처럼 제 합과 안 맞는 값이 나갔다.
                 await cur.execute("""
                     SELECT s.member_name, s.current_hot_score, s.top_platform,
                            COALESCE(SUM(h.hot_score) FILTER (WHERE h.platform = 'News'), 0),
@@ -129,9 +133,9 @@ async def graph_all(limit: int = Query(350, ge=1, le=1000)):
                     FROM public.politician_hotness_summary s
                     LEFT JOIN public.politician_sns_hotness h
                            ON h.member_name = s.member_name
-                          AND h.collected_at > NOW() - INTERVAL '1 day'
+                          AND h.collected_at > NOW() - (%s * INTERVAL '1 day')
                     GROUP BY s.member_name, s.current_hot_score, s.top_platform
-                """)
+                """, (TREND_DAYS,))
                 for r in await cur.fetchall():
                     hotness_map[r[0]] = {
                         "score": r[1], "platform": r[2],
@@ -211,6 +215,9 @@ async def graph(member_name: str, depth: int = Query(2, ge=1, le=5)):
             async with conn.cursor() as cur:
                 # 화제성은 뉴스와 유튜브를 합친 값이다. 총점만 주면 화면에서
                 # "종합" 이라는 사실이 드러나지 않으므로 플랫폼별 소계도 함께 준다.
+                # 소계는 총점과 반드시 같은 기간을 봐야 한다. 예전에는 총점만
+                # 7일로 넓히고 여기가 1일로 남아, 화면에 '종합 700 / 뉴스 100
+                # / 유튜브 0' 처럼 제 합과 안 맞는 값이 나갔다.
                 await cur.execute("""
                     SELECT s.member_name, s.current_hot_score, s.top_platform,
                            COALESCE(SUM(h.hot_score) FILTER (WHERE h.platform = 'News'), 0),
@@ -218,9 +225,9 @@ async def graph(member_name: str, depth: int = Query(2, ge=1, le=5)):
                     FROM public.politician_hotness_summary s
                     LEFT JOIN public.politician_sns_hotness h
                            ON h.member_name = s.member_name
-                          AND h.collected_at > NOW() - INTERVAL '1 day'
+                          AND h.collected_at > NOW() - (%s * INTERVAL '1 day')
                     GROUP BY s.member_name, s.current_hot_score, s.top_platform
-                """)
+                """, (TREND_DAYS,))
                 for r in await cur.fetchall():
                     hotness_map[r[0]] = {
                         "score": r[1], "platform": r[2],
@@ -250,13 +257,16 @@ async def sns_hot_posts(member_name: str, limit: int = Query(5, ge=1, le=100)):
     try:
         async with graph_storage.connection() as conn:
             async with conn.cursor() as cur:
+                # 화면이 "최근 일주일" 이라고 적어 두고 90일치를 보여 주면
+                # 안 된다. 읽는 쪽도 같은 창을 쓴다.
                 await cur.execute("""
                     SELECT platform, author_type, content_preview, engagement_data, hot_score, collected_at 
                     FROM public.politician_sns_hotness
                     WHERE member_name = %s
+                      AND collected_at > NOW() - (%s * INTERVAL '1 day')
                     ORDER BY hot_score DESC, collected_at DESC
                     LIMIT %s
-                """, (member_name, limit))
+                """, (member_name, TREND_DAYS, limit))
                 rows = await cur.fetchall()
                 results = [{
                     "platform": r[0],
@@ -279,9 +289,10 @@ async def sns_trends(limit: int = Query(20, ge=1, le=200)):
                 await cur.execute("""
                     SELECT member_name, platform, author_type, content_preview, engagement_data, hot_score, collected_at 
                     FROM public.politician_sns_hotness
+                    WHERE collected_at > NOW() - (%s * INTERVAL '1 day')
                     ORDER BY hot_score DESC, collected_at DESC
                     LIMIT %s
-                """, (limit,))
+                """, (TREND_DAYS, limit))
                 rows = await cur.fetchall()
                 results = [{
                     "member_name": r[0],
@@ -352,35 +363,40 @@ async def periods():
     관계는 지우지 않는다. 화제성은 "지금 누가 회자되는가" 라서 최근
     일주일만 본다.
     """
-    from core.hotness import TREND_DAYS
-
     try:
         async with graph_storage.connection() as conn:
             async with conn.cursor() as cur:
-                # 수집을 언제 시작했는지. 관계 로그와 화제성 기록 중 이른 쪽.
+                # 관계 기간은 관계 로그에서 읽는다. 예전에는 끝 날짜를 화제성
+                # 테이블에서 가져와, 수집이 실패한 날 관계는 계속 쌓이는데도
+                # 기간이 멈춘 것처럼 보였다.
+                # id 는 시각과 같은 순서로 늘어나므로 기존 (id DESC) 인덱스로
+                # 양 끝을 집는다. MIN/MAX(timestamp) 는 색인이 없어 매 요청마다
+                # 로그 전체를 훑었다.
                 await cur.execute("""
-                    SELECT LEAST(
-                        (SELECT MIN(timestamp) FROM turing_logs),
-                        (SELECT MIN(collected_at) FROM public.politician_sns_hotness)
-                    ),
-                    (SELECT MAX(collected_at) FROM public.politician_sns_hotness)
+                    SELECT (SELECT timestamp FROM turing_logs ORDER BY id ASC LIMIT 1),
+                           (SELECT timestamp FROM turing_logs ORDER BY id DESC LIMIT 1),
+                           (SELECT MAX(collected_at) FROM public.politician_sns_hotness)
                 """)
                 row = await cur.fetchone()
-        started, latest = (row or (None, None))
+        rel_from, rel_to, collected = (row or (None, None, None))
+        day = lambda v: v.strftime("%Y-%m-%d") if v else None   # noqa: E731
         return JSONResponse(content={
             "sentiment": {
                 "mode": "cumulative",
-                "from": started.strftime("%Y-%m-%d") if started else None,
-                "to": latest.strftime("%Y-%m-%d") if latest else None,
+                "from": day(rel_from),
+                "to": day(rel_to),
             },
             "trend": {
                 "mode": "rolling",
                 "days": TREND_DAYS,
-                "to": latest.strftime("%Y-%m-%d") if latest else None,
+                "to": day(collected),
             },
         })
     except Exception as e:                                     # noqa: BLE001
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        # 이 파일의 다른 DB 경로와 같이, 먼저 남기고 나간다. 드라이버 메시지에는
+        # 접속 정보가 섞여 있어 그대로 내보내지 않는다.
+        logging.warning(f"기간 조회 실패: {e}")
+        return JSONResponse(content={"error": "periods unavailable"}, status_code=500)
 
 
 @app.get('/api/stats')

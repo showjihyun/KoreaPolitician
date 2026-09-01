@@ -166,7 +166,7 @@ class GraphStorage:
                         );
                         -- 조회 패턴에 맞춘 인덱스.
                         -- /api/sns/trends 는 hot_score 로 전체 정렬하고,
-                        -- _update_summary 는 (member_name, collected_at) 로 최근 24시간을
+                        -- _update_summary 는 (member_name, collected_at) 로 최근 TREND_DAYS 일을
                         -- 훑는다. 인덱스가 없으면 둘 다 매번 Seq Scan + Sort 였다.
                         CREATE INDEX IF NOT EXISTS idx_sns_hotness_score
                             ON public.politician_sns_hotness (hot_score DESC, collected_at DESC);
