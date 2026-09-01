@@ -496,10 +496,10 @@ class SNSViralityCollector:
             s = yt_stats
             logger.info(
                 "[YT 요약] 검색 %d회 / 영상 발견 %d개 / 결과 0건인 의원 %d명 / "
-                "렌더러 대기실패 %d / 파싱 %d / 조회수미달 %d / 항목오류 %d / "
-                "크롤오류 %d / 최종수집 %d건",
+                "렌더러 대기실패 %d / 파싱 %d / 주소못찾음 %d / 조회수미달 %d / "
+                "항목오류 %d / 크롤오류 %d / 최종수집 %d건",
                 s["searched"], s["videos_seen"], s["member_zero"], s["no_renderer"],
-                s["parsed"], s["below_threshold"], s["item_error"],
+                s["parsed"], s["no_href"], s["below_threshold"], s["item_error"],
                 s["crawl_error"], s["collected"])
 
         self._drop_legacy_youtube_dupes()
