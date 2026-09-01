@@ -123,18 +123,22 @@ async def graph_all(limit: int = Query(350, ge=1, le=1000)):
             async with conn.cursor() as cur:
                 # 화제성은 뉴스와 유튜브를 합친 값이다. 총점만 주면 화면에서
                 # "종합" 이라는 사실이 드러나지 않으므로 플랫폼별 소계도 함께 준다.
-                # 소계는 총점과 반드시 같은 기간을 봐야 한다. 예전에는 총점만
-                # 7일로 넓히고 여기가 1일로 남아, 화면에 '종합 700 / 뉴스 100
-                # / 유튜브 0' 처럼 제 합과 안 맞는 값이 나갔다.
+                # 총점과 소계를 한 번에, 같은 창에서 센다.
+                #
+                # 예전에는 총점을 요약 테이블의 저장값에서 읽었다. 그 값은
+                # 크롤러가 마지막으로 돈 시점의 기준으로 계산돼 있어, 창을
+                # 넓히자 화면에 '종합 2576 = 뉴스 4540 + 유튜브 1271' 처럼
+                # 제 합과 안 맞는 숫자가 나갔다. 한 숫자를 두 곳에서 구하면
+                # 언젠가 갈라진다. 소계를 더한 값이 곧 총점이다.
                 await cur.execute("""
-                    SELECT s.member_name, s.current_hot_score, s.top_platform,
-                           COALESCE(SUM(h.hot_score) FILTER (WHERE h.platform = 'News'), 0),
-                           COALESCE(SUM(h.hot_score) FILTER (WHERE h.platform = 'YouTube'), 0)
-                    FROM public.politician_hotness_summary s
-                    LEFT JOIN public.politician_sns_hotness h
-                           ON h.member_name = s.member_name
-                          AND h.collected_at > NOW() - (%s * INTERVAL '1 day')
-                    GROUP BY s.member_name, s.current_hot_score, s.top_platform
+                    SELECT member_name,
+                           SUM(hot_score),
+                           (ARRAY_AGG(platform ORDER BY hot_score DESC))[1],
+                           COALESCE(SUM(hot_score) FILTER (WHERE platform = 'News'), 0),
+                           COALESCE(SUM(hot_score) FILTER (WHERE platform = 'YouTube'), 0)
+                    FROM public.politician_sns_hotness
+                    WHERE collected_at > NOW() - (%s * INTERVAL '1 day')
+                    GROUP BY member_name
                 """, (TREND_DAYS,))
                 for r in await cur.fetchall():
                     hotness_map[r[0]] = {
@@ -215,18 +219,22 @@ async def graph(member_name: str, depth: int = Query(2, ge=1, le=5)):
             async with conn.cursor() as cur:
                 # 화제성은 뉴스와 유튜브를 합친 값이다. 총점만 주면 화면에서
                 # "종합" 이라는 사실이 드러나지 않으므로 플랫폼별 소계도 함께 준다.
-                # 소계는 총점과 반드시 같은 기간을 봐야 한다. 예전에는 총점만
-                # 7일로 넓히고 여기가 1일로 남아, 화면에 '종합 700 / 뉴스 100
-                # / 유튜브 0' 처럼 제 합과 안 맞는 값이 나갔다.
+                # 총점과 소계를 한 번에, 같은 창에서 센다.
+                #
+                # 예전에는 총점을 요약 테이블의 저장값에서 읽었다. 그 값은
+                # 크롤러가 마지막으로 돈 시점의 기준으로 계산돼 있어, 창을
+                # 넓히자 화면에 '종합 2576 = 뉴스 4540 + 유튜브 1271' 처럼
+                # 제 합과 안 맞는 숫자가 나갔다. 한 숫자를 두 곳에서 구하면
+                # 언젠가 갈라진다. 소계를 더한 값이 곧 총점이다.
                 await cur.execute("""
-                    SELECT s.member_name, s.current_hot_score, s.top_platform,
-                           COALESCE(SUM(h.hot_score) FILTER (WHERE h.platform = 'News'), 0),
-                           COALESCE(SUM(h.hot_score) FILTER (WHERE h.platform = 'YouTube'), 0)
-                    FROM public.politician_hotness_summary s
-                    LEFT JOIN public.politician_sns_hotness h
-                           ON h.member_name = s.member_name
-                          AND h.collected_at > NOW() - (%s * INTERVAL '1 day')
-                    GROUP BY s.member_name, s.current_hot_score, s.top_platform
+                    SELECT member_name,
+                           SUM(hot_score),
+                           (ARRAY_AGG(platform ORDER BY hot_score DESC))[1],
+                           COALESCE(SUM(hot_score) FILTER (WHERE platform = 'News'), 0),
+                           COALESCE(SUM(hot_score) FILTER (WHERE platform = 'YouTube'), 0)
+                    FROM public.politician_sns_hotness
+                    WHERE collected_at > NOW() - (%s * INTERVAL '1 day')
+                    GROUP BY member_name
                 """, (TREND_DAYS,))
                 for r in await cur.fetchall():
                     hotness_map[r[0]] = {
