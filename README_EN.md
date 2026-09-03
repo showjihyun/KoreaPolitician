@@ -50,23 +50,68 @@ GitHub Actions runs daily at 04:00 KST.
 
 ---
 
-## 🔬 How Relations Are Derived
+## 🔬 How Media Bias Is Corrected For
 
-Building relations from press coverage inherits the press's selection bias. These corrections are applied; the supporting literature is in [docs/MEDIA_BIAS_RESEARCH.md](docs/MEDIA_BIAS_RESEARCH.md).
+This project infers relations from **press coverage, not roll-call votes**, so the selection bias of that coverage flows straight into the graph. r/politicalscience put it bluntly: partisan reporting and clickbait make the data hard to trust. In answer, the correction stages below were designed from the political-communication and NLP literature.
 
-| Stage | What it does | Why |
-| :--- | :--- | :--- |
-| **Evidence log** | One article-level judgement is one row in `edge_observations`. Edges hold only the aggregate | Previously the last article about a pair silently overwrote all earlier ones, leaving no article count and no outlet |
-| **Stance attribution** | Asks directional hypotheses ("A criticized B") and separates direct quote / indirect quote / reporter narration, weighting them differently | What a politician said and how a reporter framed it are different kinds of evidence |
-| **Event de-duplication** | Wire copy is collapsed by body SimHash into a single vote | Syndication is one editorial decision republished across many URLs |
-| **Cross-camp corroboration** | Confidence rises only when conservative, centre-wire and progressive outlets report independently; a single camp is capped | A conflict written up by one camp only may be an attack choice rather than an event |
-| **Time decay** | 45-day half-life; recent tone and cumulative history are stored separately | Both relations and bias shift over time |
+The review and design live in [docs/MEDIA_BIAS_RESEARCH.md](docs/MEDIA_BIAS_RESEARCH.md); the applied result and measurements in [docs/ALGORITHM_REPORT.md](docs/ALGORITHM_REPORT.md). Both are in Korean.
 
-**Not yet done**: per-outlet tonality baselines, negativity inverse-probability weighting, clickbait discounting. All need more sample. The National Assembly co-sponsorship collector exists but its API requires a registration key that has not been obtained, so that table is empty.
+### Which bias, and what stops it
 
-**The biggest limitation**: there is **no human-validated sample** of the automatically extracted relations. Without precision and recall numbers, treat the relation data as illustration rather than as a result. Sampling and scoring tooling is ready (see Operations below).
+| Bias | How it showed up here | Correction | Grounding |
+| :--- | :--- | :--- | :--- |
+| **Evidence lost to overwriting** | The last article about a pair erased all earlier ones — no article count, no outlet, no history | **Evidence log**: one article-level judgement per row; edges carry only the aggregate | — |
+| **Tonality bias** | Without knowing which camp reported it, outlet slant could not be subtracted | Every observation stores its **outlet and camp** | Eberl et al. 2017, Choi & Im 2021 |
+| **Gatekeeping / attack selection** | A conflict written up by a single camp was drawn as settled fact | **Cross-camp corroboration**: confidence rises only on independent reporting from different camps, and one camp is capped at 0.7 | Mullainathan & Shleifer 2005, Gentzkow & Shapiro 2006, Budak et al. 2016, Park 2024 |
+| **Volume illusion from syndication** | Wire copy arrived under many URLs and each counted as a separate vote | **Event de-duplication** by body SimHash; a cluster spanning camps folds to centre, since that was the wire's decision | Yonhap's share of portal volume |
+| **Framing / statement selection** | A reporter's adversarial framing weighed the same as what a politician actually said | **Stance attribution**: directional hypotheses, weighted direct quote 1.0 / indirect 0.7 / reporter narration 0.3, halved when hedged | Entman 1993, Recasens et al. 2013, Yu & Oh 2012 |
+| **Sensational sentence over-represented** | One peak score stood in for the whole article | Weighted mean of the **top three windows** | — |
+| **Roundup dilution** | A pair pulled from an article naming ten legislators weighed as much as a dedicated story | Divided by **1/√n** per person | — |
+| **Dynamic bias** | Bias and relations shift over time, but only a cumulative value existed | **45-day half-life**; recent tone and cumulative history stored separately | Kim, Lelkes & McCrain 2022, Lee 2024 |
+| **Unsourced data mixed in** | Five hand-written sample relations were indistinguishable from real observations, on a different scale (0–100 vs 0–1) | **Generation stopped**; existing rows are listed by the audit script | — |
+
+### What the corrections actually changed
+
+Measured during the work on hand-written test articles. These are diagnostics that changed the design, **not benchmark results**.
+
+**The symmetric hypothesis was discarding real conflicts.** "A and B are in a hostile relationship" asserts a *mutual* state that one-sided criticism does not entail.
+
+| Premise: "Rep. Na criticized Rep. Lee" | Entailment |
+| :--- | ---: |
+| Original symmetric hypothesis | 0.607 ← below the 0.65 threshold, **discarded** |
+| Directional "Na criticized Lee" | 0.956 |
+| Reverse "Lee criticized Na" | 0.093 |
+
+**Co-mention was being read as a relation.** On one article naming five legislators:
+
+| Rule | Relations produced | False positives |
+| :--- | ---: | ---: |
+| Both names anywhere in the window | 10 | 6 |
+| Same sentence required when three or more are present | 4 | 0 |
+
+**Syndication cannot buy corroboration.**
+
+| Evidence | Events | Camp coverage | Confidence |
+| :--- | ---: | ---: | ---: |
+| Three copies of one wire story (Yonhap, Chosun, Hankyoreh) | 1 | 1/3 | 0.35 |
+| Plus one independently reported story (Kyunghyang) | 2 | 2/3 | 0.58 |
+
+**One camp cannot buy confidence with volume.** Twelve conservative stories reach 0.70 (the cap); three conservative plus three progressive reach 0.85.
+
+### Not corrected yet
+
+- **Per-outlet tonality baselines**: a conservative paper criticizing an opposition legislator carries different information than a progressive one doing the same. Subtracting that needs dozens of articles per outlet×party cell, which does not exist yet.
+- **Negativity inverse-probability weighting**: cooperation goes unreported, so alliance edges are structurally scarce. Bill co-sponsorship would supply non-news evidence, but its API key was not obtained.
+- **Clickbait discounting**: only the roundup weighting is in; the headline/body consistency classifier is not.
+- **Source diversification**: outlet slant is controlled for, but one portal's editorial selection is not.
+
+**The biggest limitation**: there is **no human-validated sample** of the automatically extracted relations. Without precision and recall, treat the relation data as illustration rather than a result. Stratified sampling and Krippendorff's alpha scoring are ready (see Operations).
 
 ### Inspecting the evidence yourself
+
+**In the UI**: click a relation line and the panel below opens its evidence — event count, per-camp counts, confidence, and **the source articles with links to the originals**. Where several syndicated copies were folded into one event, it says so.
+
+**Via the API**:
 
 ```bash
 # Everything behind one relation (aggregate + article list + event grouping)
