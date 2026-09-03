@@ -1,37 +1,85 @@
 # SYNDEO: KOREA POLITICIAN
-> **대한민국 국회의원 인공지능 인텔리전스 및 신경망 관계 분석 시스템**
+> **제22대 국회의원 관계망을 뉴스 본문에서 추출하고, 그 근거를 공개하는 시스템**
 
 [English](README_EN.md) | [한국어](README.md)
+
+**라이브**: https://korea-politician.vercel.app · **라이선스**: MIT
 
 ---
 
 ## 🌐 프로젝트 개요
 
-SYNDEO는 대한민국 정치 지형의 복잡한 관계를 매핑하고 분석하기 위해 설계된 최첨단 정치 인텔리전스 플랫폼입니다. 3D 신경망 그래프 시각화와 뉴스 및 SNS 플랫폼 전반의 실시간 데이터 수집을 활용하여, SYNDEO는 정치적 영향력, 여론 및 상호작용 트렌드에 대한 전례 없는 인사이트를 제공합니다.
+제22대 국회의원 296명을 그래프로 보고, 의원 사이의 우호·갈등 관계를 한국어 뉴스 본문에서 추론합니다. 표결 기록이 아니라 언론 보도를 근거로 삼기 때문에, **언론의 편향이 그대로 관계도에 들어가는 문제**가 이 프로젝트의 핵심 과제입니다.
+
+그래서 관계를 만드는 단계마다 보정을 넣고, **무엇을 근거로 그 관계를 그렸는지 전부 공개**합니다. 관계선 하나마다 근거 기사 목록, 보도한 언론사의 진영 분포, 교차 검증 신뢰도를 확인할 수 있습니다.
+
+- 보정 알고리즘의 근거 논문과 설계: [docs/MEDIA_BIAS_RESEARCH.md](docs/MEDIA_BIAS_RESEARCH.md)
+- 적용 내역과 실측값: [docs/ALGORITHM_REPORT.md](docs/ALGORITHM_REPORT.md)
+- 그래프 스키마: [docs/GRAPH_STRUCTURE.md](docs/GRAPH_STRUCTURE.md)
 
 ---
 
 ## ✨ 주요 기능
 
-### 1. 3D 신경망 정치 관계도
+### 1. 정치인 관계망 시각화
 <img width="2697" height="1261" alt="image" src="https://github.com/user-attachments/assets/bcbcc10c-b065-4bc1-8475-755634261358" />
-*제22대 국회 의원 296명의 복잡한 관계망을 고속 3D 엔진(WebGL)으로 시각화합니다.*
-- **다이내믹 인터랙션**: 수천 개의 정치적 관계를 회전, 확대, 축소하며 탐색할 수 있습니다.
-- **감성 분석 매핑**: AI 감성 분석을 통해 의원 간의 긍정/부정적 관계를 시각적으로 인코딩합니다.
-- **정당별 클러스터링**: 소속 정당(민주당, 국민의힘, 혁신당 등)에 따른 실시간 노드 그룹화.
 
-### 2. 실시간 SNS 트렌드 및 화제성 분석
+*의원 296명과 정당 8개를 물리 시뮬레이션 기반 그래프로 그립니다.*
+
+- **관계 유형**: 우호(초록)·갈등(빨강)을 굵고 선명하게, 소속·언급은 배경으로 물립니다.
+- **근거의 질이 선에 드러납니다**: 굵기는 교차 검증을 반영한 무게를 따르고, **한 진영에서만 보도된 관계는 점선**입니다. 화살표는 근거가 방향을 가리킬 때만 그립니다.
+- **선을 짚으면 근거가 나옵니다**: 사건 수, 기사 수, 진영별 사건 수, 방향, 근거 종류(직접 인용/간접 인용/기자 서술), 신뢰도, 관측 기간, 근거 문장.
+- **정당별 클러스터링**과 얼굴·이름 표시 전환, 한국어·영어 전환.
+
+### 2. 화제성 순위
 <img width="2700" height="1264" alt="image" src="https://github.com/user-attachments/assets/dd52eb02-e435-4cac-af50-5aa6e2e9b95e" />
-*X(트위터), 유튜브, 인스타그램 등 디지털 공간에서의 영향력을 실시간 모니터링합니다.*
-- **화제성 스코어링**: 독자적인 알고리즘을 통한 실시간 화제성 및 사회적 영향력 점수 산출.
-- **교차 언급 탐지**: 정치인들이 디지털 공간에서 서로를 언급하는 시점을 자동 추적.
-- **참여도 분석**: 조회수, 좋아요, 댓글 등 정량적 지표의 실시간 트래킹.
 
-### 3. 자율적 데이터 파이프라인
-완전 자동화된 오케스트레이터를 통해 인텔리전스 데이터를 최신 상태로 유지합니다.
-- **뉴스 크롤러**: 네이버 뉴스의 실시간 스크래핑 및 감성 분석 추출.
-- **SNS 크롤러**: 디지털 언급 및 상호작용 패턴의 지속적 모니터링.
-- **PostgreSQL 기반 지속성**: 구조화된 데이터와 그래프 관계의 견고한 저장소.
+*최근 7일간 누가 회자되는지를 뉴스 언급과 유튜브 조회수로 집계합니다.*
+
+- 뉴스 언급과 유튜브를 같은 척도(0~100)로 맞춰 합산합니다. 조회수는 로그 압축합니다.
+- 여러 의원을 나열한 기사는 개인당 `1/√n` 로 나눠 담습니다.
+- 화제성은 **7일 롤링**, 관계는 **누적**입니다. 두 창이 다르므로 화면에 각각 표시합니다.
+
+### 3. 근거 기반 데이터 파이프라인
+매일 04:00 KST 에 GitHub Actions 가 돕니다.
+
+- **뉴스 수집**: 네이버 뉴스 정치·경제·사회 섹션과 의원별 검색.
+- **관계 추출**: 방향형 Zero-Shot NLI 로 "누가 누구를 비판/지지했는가" 를 뽑습니다.
+- **근거 적재**: 기사 단위 판정을 지우지 않고 전부 남깁니다. 엣지는 그 집계 결과입니다.
+- **SNS 수집**: 유튜브. X·인스타그램은 비로그인 수집이 막혀 꺼 두었습니다.
+
+---
+
+## 🔬 관계는 어떻게 만들어지는가
+
+언론 보도를 근거로 관계를 만들면 언론의 선택 편향이 그대로 들어옵니다. 다음 보정을 넣었습니다. 근거 논문은 [docs/MEDIA_BIAS_RESEARCH.md](docs/MEDIA_BIAS_RESEARCH.md) 에 정리했습니다.
+
+| 단계 | 무엇을 하나 | 왜 |
+| :--- | :--- | :--- |
+| **근거 로그** | 기사 하나의 판정 하나를 `edge_observations` 한 행으로 남깁니다. 엣지는 집계 결과만 담습니다 | 예전에는 같은 쌍의 마지막 기사가 앞의 전부를 덮어써, 기사 수도 언론사도 남지 않았습니다 |
+| **발화 주체 귀속** | "A가 B를 비판했다" 를 방향형으로 묻고, 직접 인용 / 간접 인용 / 기자 서술을 구분해 무게를 달리 줍니다 | 정치인이 한 말과 기자가 붙인 대립 구도는 다른 정보입니다 |
+| **사건 단위 중복 제거** | 통신사 전재를 본문 SimHash 로 묶어 한 표로 셉니다 | 전재는 편집 판단 한 번이 여러 URL 로 퍼진 것입니다 |
+| **진영 교차 검증** | 보수·중도·진보가 각자 독립 보도했을 때만 신뢰도가 올라갑니다. 한 진영은 상한을 못 넘습니다 | 한 진영만 쓴 갈등은 사건이 아니라 공격 선택일 수 있습니다 |
+| **시간 감쇠** | 반감기 45일. 최근 논조와 누적 이력을 따로 보관합니다 | 관계도 편향도 시기에 따라 변합니다 |
+
+**아직 하지 않은 것**: 언론사별 논조 기준선 보정, 부정성 선택 편향 역가중, 클릭베이트 할인. 표본이 더 쌓여야 합니다. 국회 공동발의 수집기는 만들었으나 API 키가 없어 자료가 비어 있습니다.
+
+**가장 큰 한계**: 자동 추출한 관계에 대해 **사람이 검증한 표본이 아직 없습니다.** 정밀도·재현율 수치가 없으므로, 관계 데이터는 아직 분석 결과가 아니라 예시로 보아야 합니다. 표집·채점 도구는 준비돼 있습니다(아래 운영 절 참조).
+
+### 근거를 직접 확인하려면
+
+```bash
+# 관계 하나의 근거 전체 (집계 결과 + 기사 목록 + 사건 묶음)
+curl "https://<백엔드>/api/relations/evidence?a=나경원&b=안철수"
+
+# 근거 원본 덤프 (페이지 단위)
+curl "https://<백엔드>/api/relations/evidence?limit=200"
+
+# 언론사를 어느 진영으로 보고 있는지
+curl "https://<백엔드>/api/relations/camps"
+```
+
+인증이 없는 읽기 전용입니다. 진영 구분은 논쟁적인 판단이라 숨기지 않습니다.
 
 ---
 
@@ -41,33 +89,34 @@ SYNDEO는 대한민국 정치 지형의 복잡한 관계를 매핑하고 분석�
 graph TD
     subgraph "데이터 소스"
         News[네이버 뉴스]
-        SNS[X / 유튜브 / 인스타그램]
-        Assembly[국회 API]
+        YT[유튜브]
+        Bills[국회 발의법률안 API<br/>키 필요 · 현재 미수집]
     end
 
-    subgraph "백엔드 엔진 (Python/FastAPI)"
-        Orchestrator[파이프라인 오케스트레이터]
-        Sentiment[AI 감성 분석 엔진]
-        GraphLayer[인메모리 그래프 레이어]
+    subgraph "수집 · 추출"
+        Crawler[뉴스 크롤러]
+        NLI[방향형 NLI 태도 추출<br/>mDeBERTa mnli-xnli]
     end
 
-    subgraph "저장소"
-        Postgres[(PostgreSQL)]
+    subgraph "근거와 집계"
+        Obs[(edge_observations<br/>기사 단위 근거)]
+        Agg[집계<br/>사건 클러스터링 · 진영 교차검증 · 반감기]
     end
 
-    subgraph "프론트엔드 (React/TypeScript)"
-        WebGL[3D WebGL 그래프]
-        Dashboard[인텔리전스 대시보드]
+    subgraph "저장 · API (FastAPI)"
+        Graph[인메모리 그래프 + PostgreSQL]
+        API[REST API<br/>그래프 · 화제성 · 근거 공개]
     end
 
-    News --> Orchestrator
-    SNS --> Orchestrator
-    Assembly --> Orchestrator
-    Orchestrator --> Sentiment
-    Sentiment --> GraphLayer
-    GraphLayer --> Postgres
-    Postgres --> Dashboard
-    Postgres --> WebGL
+    subgraph "프론트엔드 (React + vis-network)"
+        Board[관계 보드 · 화제성 순위]
+    end
+
+    News --> Crawler --> NLI --> Obs --> Agg --> Graph
+    Crawler --> Hot[화제성 집계<br/>7일 롤링]
+    YT --> Hot --> Graph
+    Bills -.-> Cos[(cosponsorship)] -.-> Graph
+    Graph --> API --> Board
 ```
 
 ---
@@ -76,60 +125,135 @@ graph TD
 
 | 레이어 | 기술 스택 |
 | :--- | :--- |
-| **Frontend** | React 18, TypeScript, Vite, Tailwind CSS, Three.js, React Force Graph 3D |
-| **Backend** | Python 3.12, FastAPI, Playwright, Psycopg2 |
-| **Database** | PostgreSQL (Relational & Graph Storage) |
-| **DevOps** | Docker, Docker Compose, Nginx |
+| **Frontend** | React 19, Vite 6, vis-network(2D 그래프), d3, zustand — 별도 저장소 |
+| **Backend** | Python 3.12, FastAPI, psycopg 3, Playwright, BeautifulSoup |
+| **관계 추출** | transformers, PyTorch, `MoritzLaurer/mDeBERTa-v3-base-mnli-xnli` (Zero-Shot NLI) |
+| **Database** | PostgreSQL (관계형 + 그래프 저장) |
+| **자동화 · 배포** | GitHub Actions(매일 수집), Render(API), Vercel(프론트), Docker Compose(로컬) |
+
+> 프론트엔드는 vis-network 기반 **2D 물리 시뮬레이션 그래프**입니다. `docker-compose.yml` 의 Neo4j 서비스는 `legacy` 프로필로 남아 있으며 파이프라인이 쓰지 않습니다.
 
 ---
 
 ## 🚀 시작하기
 
 ### 사전 요구 사항
-- Docker & Docker Compose
-- Node.js (로컬 프론트엔드 개발용)
+- Docker & Docker Compose (백엔드 · DB)
+- Node.js 18+ (프론트엔드)
+- Python 3.12 (파이프라인을 로컬에서 돌릴 때)
 
-### 빠른 시작
-1. **리포지토리 클론**
-2. **인프라 가동**
-   ```bash
-   docker-compose up -d
-   ```
-3. **데이터 파이프라인 실행**
-   ```bash
-   $env:PYTHONPATH="backend"ㅇ
-   python backend/scripts/run_news_sns.py
-   ```
-4. **접속 주소**
-   - 프론트엔드: `http://localhost:3000`
-   - API 문서: `http://localhost:5000/docs`
+### 1. 백엔드와 DB
 
-### 프론트엔드
-프론트엔드는 별도 저장소에서 관리합니다 → [showjihyun/frontend](https://github.com/showjihyun/frontend)
+```bash
+docker-compose up -d          # API :5000, PostgreSQL 호스트 :25432
+```
+
+- API 문서: http://localhost:5000/docs
+- 최초 기동 시 `data/assembly_members_complete.json` 에서 의원 296명을 적재합니다.
+
+### 2. 프론트엔드
+
+별도 저장소입니다 → [showjihyun/frontend](https://github.com/showjihyun/frontend)
 
 ```bash
 git clone https://github.com/showjihyun/frontend.git frontend
-cd frontend && npm install && npm run dev
+cd frontend && npm install && npm run dev   # http://localhost:3000
 ```
 
-배포(Vercel): https://korea-politician.vercel.app
+`VITE_API_BASE_URL` 을 비워 두면 개발 프록시가 `localhost:5000` 으로 넘깁니다.
+
+### 3. 데이터 파이프라인 (선택)
+
+수집은 GitHub Actions 가 매일 돌립니다. 로컬에서 직접 돌리려면 파이프라인을 **개별로** 실행하십시오. `scripts/run_news_sns.py` 는 `while True` 데몬이라 일회성 실행에 맞지 않습니다.
+
+```bash
+export PYTHONPATH=backend
+export POSTGRES_HOST=localhost POSTGRES_PORT=25432 \
+       POSTGRES_USER=postgres POSTGRES_PASSWORD=1234 POSTGRES_DB=postgres
+export API_BASE_URL=http://localhost:5000 API_WRITE_TOKEN=<토큰>
+
+python backend/crawlers/news_crawler_pipeline.py   # 뉴스 수집 + 관계 집계
+python backend/crawlers/sns_crawler_pipeline.py    # 유튜브 화제성
+```
+
+> Windows PowerShell 에서는 `$env:PYTHONPATH="backend"` 형태로 지정합니다.
+> 관계 추출 모델(약 550MB)을 처음 한 번 내려받습니다.
 
 ### 백엔드 배포
-무료 티어(Neon + Render + GitHub Actions) 구성 가이드: [docs/BACKEND_DEPLOY.md](docs/BACKEND_DEPLOY.md)
+무료 티어(PostgreSQL + Render + GitHub Actions) 구성 가이드: [docs/BACKEND_DEPLOY.md](docs/BACKEND_DEPLOY.md)
+
+---
+
+## 🧪 테스트
+
+```bash
+pip install -r backend/requirements-api.txt -r backend/requirements-dev.txt
+pytest
+```
+
+저장소 루트의 `pytest.ini` 가 경로와 `PYTHONPATH` 를 잡아 줍니다.
+
+순수 함수(문장 분리, SimHash, 신뢰도, 진영 매핑, 공동발의 집계)는 DB 없이 돌고, 적재·집계·API 테스트는 실제 PostgreSQL 을 씁니다. 접속할 수 없으면 자동으로 건너뜁니다. 개발자의 데이터를 건드리지 않도록 전용 테스트 DB 를 따로 만듭니다.
+
+---
+
+## 🔧 운영
+
+조율값은 전부 환경변수입니다. 기본값의 근거는 각 상수 옆에 적어 두었습니다.
+
+| 환경변수 | 기본값 | 무엇을 바꾸나 |
+| :--- | :--- | :--- |
+| `RELATION_HALF_LIFE_DAYS` | 45 | 최근 논조의 반감기 |
+| `RELATION_SIMHASH_DISTANCE` | 6 | 같은 사건으로 묶을 본문 유사도 |
+| `RELATION_CAMP_RELIABILITY` | 0.7 | 진영 하나가 도달할 수 있는 신뢰 상한 |
+| `RELATION_MIN_CLUSTERS` | 1 | 엣지로 승격하는 최소 사건 수 |
+| `RELATION_NLI_THRESHOLD` | 0.65 | 함의 확률 하한 |
+| `RELATION_DIRECTION_MARGIN` | 0.10 | 방향을 인정할 점수 차 |
+| `RELATION_DROP_NARRATION` | 꺼짐 | 켜면 기자 서술을 엣지에서 아예 뺍니다 |
+
+운영 스크립트:
+
+```bash
+# 근거 분포 확인 (사건 수, 진영 커버리지, 신뢰도, 전재 비율, 진영표 미등재 매체)
+python backend/scripts/evidence_report.py
+
+# 집계 이전에 만들어진 엣지를 근거 로그로 옮긴다. 먼저 계획만 본다.
+python backend/scripts/backfill_edge_observations.py --dry-run
+python backend/scripts/backfill_edge_observations.py --push
+
+# 사람이 검증할 표본 뽑기 → 두 사람이 채운 뒤 채점
+python backend/scripts/coding_sample.py sample -n 200
+python backend/scripts/coding_sample.py score
+```
+
+---
+
+## 📊 데이터에 대한 정직한 설명
+
+- **관계는 보도된 관계입니다.** 언론이 다루지 않은 협력과 갈등은 여기에 없습니다. 뉴스 가치 연구가 예측하듯 갈등이 우호보다 훨씬 많이 잡힙니다.
+- **화제성은 영향력이 아닙니다.** 보도량을 재는 값이라, 조용히 중요한 일을 하는 의원은 낮게 나옵니다.
+- **수집원이 포털 한 곳입니다.** 언론사 진영은 통제하지만 포털의 편집 선택은 통제하지 못합니다.
+- **사람이 검증한 표본이 없습니다.** 정밀도·재현율 수치가 나오기 전까지 관계 데이터는 예시입니다.
+- **점선은 근거가 약하다는 뜻입니다.** 한 진영만 보도했거나, 집계 계층 이전에 만들어져 근거 기록이 없는 관계입니다.
 
 ---
 
 ## 🤝 기여 및 라이선스
-본 프로젝트는 정치 데이터 인텔리전스 연구 이니셔티브의 일환입니다. 반박시 니말이
+
+방법론에 대한 비판을 환영합니다. 근거 엔드포인트가 열려 있으므로 추출 결과를 기사 단위로 직접 확인하고 반박할 수 있습니다.
+
 - **라이선스**: MIT
-- **데이터 출처**: 국회 공식 데이터, 뉴스/SNS 오픈 API.
+- **데이터 출처**: 국회 공개 의원 정보, 네이버 뉴스, 유튜브
 
-## 📚 관련 연구 및 논문 (Publications)
+## 📚 관련 문서
 
-SYNDEO 시스템의 핵심 알고리즘인 **동적 문맥 전파(DCP)**와 하이브리드 아키텍처에 관한 상세 연구 내용은 다음 논문에서 확인하실 수 있습니다.
-
-- [연구 논문 (한국어) - DCP_paper.txt](docs/DCP_paper.txt)
-- [Research Paper (English) - DCP_paper_en.txt](docs/DCP_paper_en.txt)
+| 문서 | 내용 |
+| :--- | :--- |
+| [MEDIA_BIAS_RESEARCH.md](docs/MEDIA_BIAS_RESEARCH.md) | 언론 편향 논문 조사(국제 Top 10 · 국내 12편)와 보정 알고리즘 설계 |
+| [ALGORITHM_REPORT.md](docs/ALGORITHM_REPORT.md) | 적용 내역, 실측값, 파이프라인 변화 |
+| [GRAPH_STRUCTURE.md](docs/GRAPH_STRUCTURE.md) | 노드·엣지 스키마와 근거 로그 테이블 |
+| [reddit_post.md](docs/reddit_post.md) | r/politicalscience 에 올릴 방법론 설명 초안 |
+| [DCP_paper.txt](docs/DCP_paper.txt) · [영문](docs/DCP_paper_en.txt) | 초기 설계 논문(Dynamic Contextual Propagation). **현재 파이프라인에서는 쓰지 않습니다.** 동맹을 "같은 정당" 으로 정의해 정파 구조를 보정이 아니라 증폭했고, 공동발의 기반으로 대체할 계획입니다 |
 
 ---
 *Created by Choi Ji Hyun for Advanced Political Data Science Lab.*
