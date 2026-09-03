@@ -17,13 +17,25 @@
    이는 손실이 아니라 실제 근거 수준을 드러내는 것이다.
 3. url 이 없는 엣지는 근거를 댈 수 없는 관계다. 목록으로 보여 주고,
    --drop-unsourced 를 주면 지운다. 기본은 지우지 않는다.
-4. 관측이 있는 쌍을 전부 다시 집계해 엣지를 새로 쓴다.
+4. 관측이 있는 쌍을 전부 다시 집계한다. --push 를 주면 API 로 반영한다.
 
-실행
-----
-    POSTGRES_HOST=... PYTHONPATH=backend python backend/scripts/backfill_edge_observations.py
-    ... --drop-unsourced      근거 없는 엣지를 지운다
-    ... --dry-run             바꾸지 않고 무엇을 할지만 출력한다
+운영에서 도는 순서
+------------------
+바꾸는 것이 있으므로 먼저 계획을 본다.
+
+    POSTGRES_HOST=... POSTGRES_DB=... POSTGRES_USER=... POSTGRES_PASSWORD=... \\
+    PYTHONPATH=backend python backend/scripts/backfill_edge_observations.py --dry-run
+
+내용을 확인한 뒤 근거를 옮기고 엣지에 반영한다.
+
+    POSTGRES_... API_BASE_URL=https://<백엔드> API_WRITE_TOKEN=<토큰> \\
+    PYTHONPATH=backend python backend/scripts/backfill_edge_observations.py --push
+
+근거 없는 엣지(임포터가 넣던 예시 5건)까지 지우려면 --drop-unsourced 를
+함께 준다. 삭제 후에는 API 를 재기동해야 인메모리 그래프에 반영된다.
+
+DB 에 직접 쓰지 않고 API 를 거치는 이유는, API 프로세스가 그래프를 메모리에
+들고 있어서 뒤에서 DB 만 고치면 재기동 전까지 갈라지기 때문이다.
 """
 
 import argparse
@@ -35,7 +47,7 @@ from typing import Dict, List, Optional, Tuple
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from core import relation_evidence  # noqa: E402
-from core.db_config import close_sync_pool, get_sync_pool  # noqa: E402
+from core.db_config import api_base_url, close_sync_pool, get_sync_pool  # noqa: E402
 from core.media_outlets import camp_of  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -100,7 +112,8 @@ def _normalise_legacy_score(score: float) -> float:
     return min(1.0, max(0.0, value))
 
 
-def backfill(drop_unsourced: bool = False, dry_run: bool = False) -> None:
+def backfill(drop_unsourced: bool = False, dry_run: bool = False,
+              push: bool = False) -> None:
     names = _node_names()
     edges = _sentiment_edges()
     logger.info("호불호 엣지 %d개를 확인한다.", len(edges))
@@ -199,13 +212,20 @@ def backfill(drop_unsourced: bool = False, dry_run: bool = False) -> None:
     single_camp = sum(1 for e in aggregated.values()
                       if e["properties"]["camp_coverage"] < 2 / 3)
     logger.info("그중 단일 진영 보도 %d개 (화면에서 점선으로 표시된다).", single_camp)
+
+    if not push:
+        logger.info("")
+        logger.info("여기까지는 근거 로그만 채웠다. 엣지에 반영하려면 --push 를 주거나")
+        logger.info("크롤러를 한 번 돌린다. --push 에는 API_BASE_URL 과")
+        logger.info("API_WRITE_TOKEN 이 필요하다.")
+        return
+
     logger.info("")
-    logger.info("집계 결과를 엣지에 반영하려면 크롤러를 한 번 돌리거나,")
-    logger.info("push_aggregated_edges 를 직접 호출한다:")
-    logger.info("  PYTHONPATH=backend python -c \\")
-    logger.info("    'from crawlers.news_crawler_pipeline import push_aggregated_edges;\\")
-    logger.info("     from core.relation_evidence import all_pair_keys;\\")
-    logger.info("     print(push_aggregated_edges(all_pair_keys()))'")
+    logger.info("집계 결과를 API 로 반영한다: %s", api_base_url())
+    saved, total = relation_evidence.publish_edges(keys)
+    logger.info("엣지 %d/%d개 저장", saved, total)
+    if saved < total:
+        logger.warning("일부가 저장되지 않았다. API 주소와 API_WRITE_TOKEN 을 확인한다.")
 
 
 def main() -> None:
@@ -214,10 +234,13 @@ def main() -> None:
                         help="근거 기사 주소가 없는 엣지를 지운다")
     parser.add_argument("--dry-run", action="store_true",
                         help="바꾸지 않고 계획만 출력한다")
+    parser.add_argument("--push", action="store_true",
+                        help="집계 결과를 API 로 반영한다 (API_BASE_URL, API_WRITE_TOKEN 필요)")
     args = parser.parse_args()
 
     try:
-        backfill(drop_unsourced=args.drop_unsourced, dry_run=args.dry_run)
+        backfill(drop_unsourced=args.drop_unsourced, dry_run=args.dry_run,
+                 push=args.push)
     finally:
         close_sync_pool()
 

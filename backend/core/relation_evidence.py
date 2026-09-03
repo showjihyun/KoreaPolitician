@@ -697,3 +697,60 @@ def aggregate_pairs(pair_keys: Sequence[str],
         if edge:
             result[key] = edge
     return result
+
+
+def publish_edges(pair_keys: Sequence[str]) -> Tuple[int, int]:
+    """쌍별 집계를 API 로 밀어 넣는다. (저장 성공 수, 승격된 쌍 수).
+
+    크롤러와 소급 이관 스크립트가 같이 쓴다. 여기 두는 이유는 소급 이관이
+    NLI 모델을 띄우지 않고도 반영할 수 있어야 하기 때문이다. 크롤러 모듈을
+    임포트하면 torch 와 transformers 가 따라 올라온다.
+
+    DB 에 직접 쓰지 않고 API 를 거치는 이유는, API 프로세스가 그래프를
+    메모리에 들고 있어서 뒤에서 DB 만 고치면 재기동 전까지 갈라지기 때문이다.
+    """
+    import requests                                   # noqa: PLC0415
+    from core.db_config import api_base_url, env      # noqa: PLC0415
+
+    keys = sorted({k for k in pair_keys if k})
+    if not keys:
+        return 0, 0
+
+    try:
+        edges = aggregate_pairs(keys)
+    except Exception as e:                             # noqa: BLE001
+        logger.error(f"[관계 집계 실패] {e}")
+        return 0, 0
+
+    api_url = api_base_url() + "/api/edge"
+    headers = {}
+    write_token = env("API_WRITE_TOKEN")
+    if write_token:
+        headers["X-API-Key"] = write_token
+
+    saved = 0
+    for key, edge in edges.items():
+        entity_a, entity_b = split_pair_key(key)
+        payload = {
+            "source": entity_a,
+            "target": entity_b,
+            "type": edge["type"],
+            "properties": edge["properties"],
+        }
+        try:
+            # 타임아웃이 없으면 슬립 중인 무료 인스턴스를 깨우는 동안
+            # 무한 대기할 수 있다.
+            response = requests.post(api_url, json=payload,
+                                     headers=headers, timeout=60)
+            if response.status_code == 200:
+                saved += 1
+            else:
+                logger.warning(
+                    f"[엣지 저장 거부] {key} {response.status_code} {response.text[:120]}")
+        except Exception as e:                         # noqa: BLE001
+            logger.error(f"Error saving to TuringDB: {e}")
+
+    skipped = len(keys) - len(edges)
+    if skipped:
+        logger.info(f"[관계 집계] 근거가 기준에 못 미쳐 보류한 쌍 {skipped}개")
+    return saved, len(edges)

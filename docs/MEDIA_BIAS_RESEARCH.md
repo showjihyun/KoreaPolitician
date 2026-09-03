@@ -56,10 +56,13 @@
 
 ```bash
 # 1. 집계 이전에 만들어진 엣지를 근거 로그로 옮긴다. 한 번만.
-#    먼저 무엇을 할지 본다.
+#    먼저 무엇을 할지 본다. 아무것도 바꾸지 않는다.
 python backend/scripts/backfill_edge_observations.py --dry-run
-#    근거 기사 주소가 없는 엣지(임포터가 넣던 예시 5건)를 지우려면
-python backend/scripts/backfill_edge_observations.py --drop-unsourced
+#    확인한 뒤 근거를 옮기고 엣지에 반영한다.
+#    --push 에는 API_BASE_URL 과 API_WRITE_TOKEN 이 필요하다.
+python backend/scripts/backfill_edge_observations.py --push
+#    근거 기사 주소가 없는 엣지(임포터가 넣던 예시 5건)까지 지우려면
+python backend/scripts/backfill_edge_observations.py --push --drop-unsourced
 #    지운 뒤에는 API 를 재기동해야 인메모리 그래프에 반영된다.
 
 # 2. 수집. 근거를 쌓고 쌍마다 엣지를 다시 쓴다. 매일 자동으로 돈다.

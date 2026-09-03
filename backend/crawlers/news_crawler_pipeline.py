@@ -12,7 +12,7 @@ from core.name_matcher import find_names
 from core.hotness import ensure_news_schema, focus_weight, rebuild_from_news
 from core import relation_evidence
 from core.db_config import (api_base_url, close_sync_pool,
-                            db_config_from_env, env, get_sync_pool)
+                            db_config_from_env, get_sync_pool)
 import logging
 import traceback
 import json
@@ -261,51 +261,11 @@ def push_aggregated_edges(pair_keys):
 
     기사마다 POST 하던 것을 쌍마다 POST 로 바꾼다. 호출 수가 줄고, 무엇보다
     엣지에 실리는 값이 기사 한 건이 아니라 관측 전체의 집계가 된다.
+
+    본체는 core/relation_evidence.py 에 있다. 소급 이관 스크립트가 NLI
+    모델을 띄우지 않고도 같은 일을 할 수 있어야 하기 때문이다.
     """
-    keys = sorted(set(k for k in pair_keys if k))
-    if not keys:
-        return 0, 0
-
-    try:
-        edges = relation_evidence.aggregate_pairs(keys)
-    except Exception as e:
-        logger.error(f"[관계 집계 실패] {e}")
-        return 0, 0
-
-    # 배포 환경(GitHub Actions 등)에서는 API_BASE_URL 로 백엔드 주소를 지정한다.
-    api_url = api_base_url() + "/api/edge"
-    # 쓰기 엔드포인트는 인증을 요구한다.
-    headers = {}
-    write_token = env("API_WRITE_TOKEN")
-    if write_token:
-        headers["X-API-Key"] = write_token
-
-    saved = 0
-    for key, edge in edges.items():
-        entity_a, entity_b = relation_evidence.split_pair_key(key)
-        payload = {
-            "source": entity_a,
-            "target": entity_b,
-            "type": edge["type"],
-            "properties": edge["properties"],
-        }
-        try:
-            # 타임아웃이 없으면 슬립 중인 무료 인스턴스를 깨우는 동안
-            # 무한 대기할 수 있다.
-            response = requests.post(api_url, json=payload,
-                                     headers=headers, timeout=60)
-            if response.status_code == 200:
-                saved += 1
-            else:
-                logger.warning(
-                    f"[엣지 저장 거부] {key} {response.status_code} {response.text[:120]}")
-        except Exception as e:
-            logger.error(f"Error saving to TuringDB: {e}")
-
-    skipped = len(keys) - len(edges)
-    if skipped:
-        logger.info(f"[관계 집계] 근거가 기준에 못 미쳐 보류한 쌍 {skipped}개")
-    return saved, len(edges)
+    return relation_evidence.publish_edges(pair_keys)
 
 def crawl_custom_news_list(date_str, sid1="100", max_pages=1):
     base_url = "https://news.naver.com/main/list.naver?mode=LSD&mid=sec"

@@ -120,6 +120,56 @@ def test_all_pair_keys_lists_the_pair():
     assert ev.pair_key("김갑동", "이을순") in ev.all_pair_keys()
 
 
+def test_publish_edges_posts_one_request_per_pair(monkeypatch):
+    """반영은 기사마다가 아니라 쌍마다 한 번이어야 한다.
+
+    예전에는 기사 하나가 관계 하나를 POST 했다. 지금은 근거를 모두 모아
+    집계한 뒤 쌍당 한 번만 보낸다. 소급 이관 스크립트도 같은 함수를 쓴다.
+    """
+    key = ev.pair_key("김갑동", "이을순")
+    sent = []
+
+    class _Response:
+        status_code = 200
+        text = ""
+
+    def _fake_post(url, json=None, headers=None, timeout=None):
+        sent.append({"url": url, "payload": json, "headers": headers or {}})
+        return _Response()
+
+    import requests
+    monkeypatch.setattr(requests, "post", _fake_post)
+    monkeypatch.setenv("API_BASE_URL", "https://example.test")
+    monkeypatch.setenv("API_WRITE_TOKEN", "tok")
+
+    saved, total = ev.publish_edges([key, key])          # 중복을 줘도 한 번
+    assert (saved, total) == (1, 1)
+    assert len(sent) == 1, "쌍 하나에 요청이 여러 번 나갔다"
+
+    request = sent[0]
+    assert request["url"] == "https://example.test/api/edge"
+    assert request["headers"].get("X-API-Key") == "tok"
+
+    payload = request["payload"]
+    assert [payload["source"], payload["target"]] == ["김갑동", "이을순"]
+    assert payload["type"] in (ev.POSITIVE, ev.NEGATIVE)
+    # 화면과 감사가 읽는 값이 실려 나가야 한다.
+    for field in ("camp_coverage", "display_weight", "confidence",
+                  "n_clusters", "provenance"):
+        assert field in payload["properties"], field
+
+
+def test_publish_edges_with_no_pairs_is_a_no_op(monkeypatch):
+    import requests
+
+    def _explode(*args, **kwargs):
+        raise AssertionError("보낼 것이 없는데 요청이 나갔다")
+
+    monkeypatch.setattr(requests, "post", _explode)
+    assert ev.publish_edges([]) == (0, 0)
+    assert ev.publish_edges([None, ""]) == (0, 0)
+
+
 def test_uncollected_cosponsorship_is_not_reported_as_zero():
     """'확인한 적 없음' 과 '함께 발의한 적 없음' 은 다른 진술이다.
 
