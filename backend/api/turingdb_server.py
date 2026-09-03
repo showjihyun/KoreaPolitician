@@ -1,10 +1,13 @@
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
+from core import cosponsorship
 from core.graph_storage import graph_storage
 from core.hotness import TREND_DAYS
+from core.media_outlets import CAMPS, coverage_table
 from core.db_config import db_config_from_env, env
 from scripts.simple_importer import SimpleImporter, sync_member_profiles
 from core.image_manager import image_manager
@@ -67,6 +70,10 @@ class EdgeRequest(BaseModel):
     target: str
     type: str
     properties: dict = {}
+
+
+#: 호불호 관계 타입. 한 쌍에는 이 중 하나만 남는다.
+SENTIMENT_TYPES = ("POSITIVE_SENTIMENT", "NEGATIVE_SENTIMENT")
 
 # CORS 설정
 # allow_origins=["*"] 와 allow_credentials=True 를 함께 쓰면 스펙상 무효이며,
@@ -353,6 +360,18 @@ async def add_edge(req: EdgeRequest, _auth: None = Depends(require_write_token))
 
     try:
         edge = await graph_storage.add_edge(src_id, tgt_id, req.type, req.properties)
+        # 호불호는 무방향이며 한 쌍에 극성 하나다.
+        #
+        # 예전에는 두 극성이 서로 다른 행이라 같은 두 사람 사이에 우호와
+        # 적대가 동시에 남을 수 있었고, 이름 정렬이 바뀌면 역방향 사본까지
+        # 생겼다. 이제 관계는 관측 전체를 집계해 극성 하나로 결정되므로,
+        # 같은 쌍의 나머지 감정 엣지는 낡은 값이다.
+        if req.type in SENTIMENT_TYPES:
+            for edge_type in SENTIMENT_TYPES:
+                for a, b in ((src_id, tgt_id), (tgt_id, src_id)):
+                    if (a, b, edge_type) == (src_id, tgt_id, req.type):
+                        continue
+                    await graph_storage.remove_edge(a, b, edge_type)
     except Exception as e:
         # 저장 실패를 200 으로 돌려주면 크롤러가 성공한 줄 안다.
         logging.exception("엣지 저장 실패")
@@ -362,6 +381,97 @@ async def add_edge(req: EdgeRequest, _auth: None = Depends(require_write_token))
     await log_activity("New Relation", f"{req.source} -> {req.target} ({req.type})")
     
     return JSONResponse(content={"message": "Edge added", "edge": edge})
+
+@app.get('/api/relations/evidence')
+async def relations_evidence(
+    a: str = Query(None, description="의원 이름. b 와 함께 주면 그 쌍만 본다"),
+    b: str = Query(None, description="의원 이름"),
+    limit: int = Query(200, ge=1, le=1000),
+    cursor: int = Query(0, ge=0, description="이전 응답의 next_cursor"),
+):
+    """관계 근거를 그대로 내보낸다. 감사용이며 인증이 필요 없다.
+
+    r/politicalscience 에서 받은 지적은 "언론 편향이 그대로 관계도에
+    들어간다" 였다. 여기에 대한 답은 편향이 없다는 주장이 아니라, 어떤
+    기사가 어느 언론사에서 나와 어떤 판정을 만들었는지 전부 보여 주는
+    것이다. 적대적 매체 지각 연구(Vallone 외 1985, Hansen & Kim 2011,
+    이종혁 2015)에 따르면 관여도 높은 이용자는 어느 쪽이든 편향을
+    지각하므로, 근거를 감추면 신뢰를 얻을 수 없다.
+
+    a 와 b 를 주면 그 쌍의 집계 결과와 사건 묶음까지 함께 준다.
+    주지 않으면 관측 원본을 id 순서로 페이지 단위로 준다.
+    """
+    from core import relation_evidence as ev
+
+    try:
+        if a and b:
+            key = ev.pair_key(a, b)
+            rows = await graph_storage.fetch_all(
+                f"SELECT {ev.OBSERVATION_COLUMNS} FROM public.edge_observations "
+                "WHERE pair_key = %s ORDER BY id",
+                (key,),
+            )
+            observations = [ev.row_to_observation(r) for r in rows]
+            if not observations:
+                return JSONResponse(
+                    content={"message": f"'{a}' 와 '{b}' 의 근거 기록이 없습니다."},
+                    status_code=404,
+                )
+            edge = ev.aggregate(observations)
+            entity_a, entity_b = ev.split_pair_key(key)
+            # 뉴스 밖 대조 자료. 갈등으로 보도된 두 사람이 법안을 함께
+            # 발의했다면 그 사실이 판단에 필요하다. 뉴스는 협력을 싣지
+            # 않으므로(Galtung & Ruge 1965, Soroka 2006) 이 숫자가 뉴스만
+            # 볼 때 생기는 공백을 메운다.
+            #
+            # null 은 "확인한 적 없음", 0 은 "확인했고 함께 발의한 적 없음"
+            # 이다. 둘을 섞으면 없는 사실을 주장하게 된다.
+            try:
+                shared_bills = cosponsorship.bills_between(entity_a, entity_b)
+            except Exception:                              # noqa: BLE001
+                shared_bills = None
+            return JSONResponse(content=jsonable_encoder({
+                "pair": [entity_a, entity_b],
+                "type": edge["type"] if edge else None,
+                "aggregate": edge["properties"] if edge else None,
+                "observations": ev.annotate_clusters(observations),
+                "cosponsored_bills": shared_bills,
+                "cosponsorship_collected": shared_bills is not None,
+                "camp_table": coverage_table(),
+            }))
+
+        rows = await graph_storage.fetch_all(
+            f"SELECT {ev.OBSERVATION_COLUMNS} FROM public.edge_observations "
+            "WHERE id > %s ORDER BY id LIMIT %s",
+            (cursor, limit),
+        )
+        observations = [ev.row_to_observation(r) for r in rows]
+        return JSONResponse(content=jsonable_encoder({
+            "count": len(observations),
+            # 다음 쪽이 없으면 null. 커서는 id 라 삽입 중에도 건너뜀이 없다.
+            "next_cursor": observations[-1]["id"] if len(observations) == limit else None,
+            "observations": observations,
+        }))
+    except Exception as e:                                     # noqa: BLE001
+        # 드라이버 메시지에는 접속 정보가 섞여 있어 그대로 내보내지 않는다.
+        logging.warning(f"근거 조회 실패: {e}")
+        return JSONResponse(content={"error": "evidence unavailable"}, status_code=500)
+
+
+@app.get('/api/relations/camps')
+async def relations_camps():
+    """언론사를 어느 진영으로 보고 있는지 그대로 공개한다.
+
+    진영 구분은 논쟁적인 판단이라 숨기면 안 된다. 표에 없는 매체는
+    중도로 떨어지며, 교차 검증에서 진영 하나로만 센다.
+    """
+    return JSONResponse(content={
+        "camps": CAMPS,
+        "table": coverage_table(),
+        "default": "중도",
+        "note": "표에 없는 매체는 중도로 본다. 근거는 docs/MEDIA_BIAS_RESEARCH.md.",
+    })
+
 
 @app.get('/api/periods')
 async def periods():
@@ -427,7 +537,8 @@ def dcp_context(subject: str, target: str):
     # 1. Find Subject node
     sub_nodes = graph_storage.find_nodes("Member", {"name": f"CONTAINS:{subject}"})
     if not sub_nodes:
-        return JSONResponse(content={"allies_context": []})
+        return JSONResponse(content={"allies_context": [], "ally_basis": "unknown",
+                                     "ally_count": 0})
     
     sub_node = sub_nodes[0]
     sub_id = sub_node["id"]
@@ -435,24 +546,43 @@ def dcp_context(subject: str, target: str):
     
     # 2. Find Allies
     allies = set()
-    
+
     # Strategy A: Outgoing Positive Sentiment
     rels_out = graph_storage.get_relationships(sub_id, direction="out")
     for r in rels_out:
         if r["edge"]["type"] == "POSITIVE_SENTIMENT":
              if r["node"]: allies.add(r["node"]["id"])
 
-    # Strategy B: Same Party (Paper's 'Organizational Resonance')
-    if sub_party:
+    # Strategy B: 공동발의
+    #
+    # 예전 정의는 "같은 정당" 이었다. 그러면 같은 당 의원 170명이 서로 전부
+    # 동맹이 되어, 공명 점수가 사실상 정당 소속을 되풀이한다. 편향을
+    # 보정하려는 자리에서 정파 구조를 증폭하는 셈이었다.
+    #
+    # 공동발의는 뉴스와 무관하게 기록되는 협력의 직접 증거다. 자료가 아직
+    # 없으면 예전 정의로 물러서되, 그 사실을 응답에 적어 둔다.
+    ally_basis = "cosponsorship"
+    if cosponsorship.is_populated():
+        for name, _bills in cosponsorship.allies_of(subject):
+            nodes = graph_storage.find_nodes("Member", {"name": f"CONTAINS:{name}"})
+            if nodes:
+                allies.add(nodes[0]["id"])
+    elif sub_party:
+        ally_basis = "same_party_fallback"
         party_members = graph_storage.find_nodes("Member", {"party": sub_party})
         for pm in party_members:
             if pm["id"] != sub_id:
                 allies.add(pm["id"])
-    
+    else:
+        ally_basis = "sentiment_only"
+
+    allies.discard(sub_id)
+
     # 3. For each Ally, check relation to Target
     tgt_nodes = graph_storage.find_nodes("Member", {"name": f"CONTAINS:{target}"})
     if not tgt_nodes:
-        return JSONResponse(content={"allies_context": []})
+        return JSONResponse(content={"allies_context": [], "ally_basis": "unknown",
+                                     "ally_count": 0})
     tgt_id = tgt_nodes[0]["id"]
     
     context_data = []
@@ -461,23 +591,36 @@ def dcp_context(subject: str, target: str):
         # Fetch relationships from Ally to Target
         ally_rels = graph_storage.get_relationships(ally_id, direction="out")
         for ar in ally_rels:
-            if ar["node"]["id"] == tgt_id:
+            # 상대 노드가 없는 엣지가 있다. REPRESENTS 는 선거구를 가리키는데
+            # 선거구 노드는 적재하지 않는다. 예전에는 여기서 곧바로 첨자를
+            # 붙여 읽다가 None 을 만나면 500 이 났다.
+            if ar["node"] and ar["node"]["id"] == tgt_id:
                 # Found relation Ally -> Target
                 edge = ar["edge"]
-                if edge["type"] in ["POSITIVE_SENTIMENT", "NEGATIVE_SENTIMENT"]:
-                    weight = edge["properties"].get("score", 0.5)
-                    count = edge["properties"].get("count", 1)
-                    
-                    # Heuristic: weight boosted by count (frequency of attack/support)
-                    effective_weight = weight * (1 + (0.05 * count)) 
-                    
+                if edge["type"] in SENTIMENT_TYPES:
+                    props = edge["properties"]
+                    weight = props.get("score", 0.5)
+                    # 예전에는 존재하지 않는 count 속성을 읽어 늘 1이었다.
+                    # 지금은 집계가 사건 수를 남기므로 그것을 쓴다.
+                    events = props.get("n_clusters", 1)
+
+                    # Heuristic: weight boosted by how often it was observed
+                    effective_weight = weight * (1 + (0.05 * events))
+
                     context_data.append({
                         "ally": ar["node"]["properties"].get("name"),
                         "relation": edge["type"],
-                        "weight": effective_weight
+                        "weight": effective_weight,
+                        "events": events,
                     })
-                    
-    return JSONResponse(content={"allies_context": context_data})
+
+    return JSONResponse(content={
+        "allies_context": context_data,
+        # 동맹을 무엇으로 정의했는지 밝힌다. same_party_fallback 이면 공동발의
+        # 자료가 아직 없다는 뜻이고, 그 결과는 정파 구조를 그대로 되풀이한다.
+        "ally_basis": ally_basis,
+        "ally_count": len(allies),
+    })
 
 @app.get('/api/activity_logs')
 async def get_activity_logs(limit: int = Query(50, ge=1, le=200),

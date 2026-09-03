@@ -12,7 +12,7 @@ import os
 import psycopg
 
 from core.hotness import (NEWS_MENTION_BASE_SCORE, PLATFORM_NEWS, YOUTUBE_MAX_SCORE,
-                          _focus_weight, ensure_news_schema, rebuild_from_news,
+                          focus_weight, ensure_news_schema, rebuild_from_news,
                           update_summary, youtube_score)
 
 try:
@@ -91,11 +91,11 @@ def _prepare(articles):
 
 def test_focus_weight_penalises_name_lists():
     """여러 의원을 나열한 기사는 개인당 주목도가 낮아야 한다."""
-    assert _focus_weight(1) == 1.0
-    assert _focus_weight(4) == 0.5
-    assert _focus_weight(1) > _focus_weight(2) > _focus_weight(10)
+    assert focus_weight(1) == 1.0
+    assert focus_weight(4) == 0.5
+    assert focus_weight(1) > focus_weight(2) > focus_weight(10)
     # 선형이 아니라 제곱근이라 나열 기사가 0 에 수렴하지는 않는다
-    assert _focus_weight(10) > 0.3
+    assert focus_weight(10) > 0.3
 
 
 def test_records_one_row_per_member_per_article():

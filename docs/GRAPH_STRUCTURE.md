@@ -2,6 +2,11 @@
 
 ## 📊 데이터베이스 개요
 
+아래 개수는 초기 임포트 시점의 값이라 지금과 다르다. 현재 값은
+`GET /api/stats` 를 본다. 특히 `SAME_PARTY` 는 엣지 폭증 때문에 생성을
+중단했고(`scripts/simple_importer.py`), 호불호 관계는 수집을 돌 때마다
+바뀐다.
+
 ### 전체 통계
 - **총 노드 수**: 308개
 - **총 엣지 수**: 20,589개
@@ -13,7 +18,10 @@
 ### 관계 타입별 개수
 - **BELONGS_TO (소속)**: 300개
 - **REPRESENTS (대표)**: 10개
-- **SAME_PARTY (같은 정당)**: 20,279개
+- **SAME_PARTY (같은 정당)**: 20,279개 (현재는 생성하지 않는다)
+- **POSITIVE_SENTIMENT / NEGATIVE_SENTIMENT (호불호)**: 뉴스 근거 집계로
+  생성. 아래 상세 참조
+- **SNS_INTERACTION (언급)**: 공동 언급
 
 ---
 
@@ -134,6 +142,65 @@ Properties:
 - **설명**: 의원이 특정 지역을 대표
 - **방향**: 의원 → 지역
 - **개수**: 10개
+
+#### POSITIVE_SENTIMENT / NEGATIVE_SENTIMENT (호불호 관계)
+```
+의원 --[NEGATIVE_SENTIMENT]-- 의원      (무방향)
+```
+- **설명**: 뉴스 본문에서 확인된 우호·대립 관계
+- **방향**: 없다. `source_id` 는 가나다순으로 앞선 이름일 뿐이다
+  (`core/name_matcher.py` 의 `sorted`). 발화 주체 귀속이 들어오기 전까지
+  화면도 화살표를 그리지 않는다.
+- **한 쌍에 하나**: 두 극성이 동시에 존재할 수 없다. `/api/edge` 가 같은
+  쌍의 다른 감정 엣지를 지운다.
+- **만드는 곳**: `core/relation_evidence.py` 의 집계. 기사 단위 판정은
+  `edge_observations` 에 쌓이고, 엣지는 그 집계 결과만 담는다. 자세한
+  근거와 알고리즘은 `docs/MEDIA_BIAS_RESEARCH.md`.
+
+**properties**
+```json
+{
+  "score": 0.83,              // 최근 논조의 크기 0~1 (부호는 type 이 갖는다)
+  "score_recent": -0.83,      // 반감기 45일을 적용한 부호 있는 논조
+  "score_cumulative": -0.79,  // 감쇠 없는 부호 있는 논조
+  "polarity": -1,
+  "display_weight": 0.69,     // 화면 굵기. score x (0.5 + 0.5 x camp_coverage)
+  "social_impact_score": 0.69,// 영향력 순위가 읽는 값
+  "confidence": 0.58,         // 진영 교차 검증 신뢰도 0~1
+  "camp_coverage": 0.667,     // 현재 극성을 보도한 진영 수 / 3
+  "camps": {"보수": 2, "중도": 1, "진보": 0},        // 진영별 사건 수
+  "camps_agree": {"보수": 2, "중도": 1, "진보": 0},  // 그중 현재 극성 지지
+  "n_observations": 7,        // 근거 기사 수
+  "n_clusters": 3,            // 전재를 묶은 뒤의 사건 수
+  "n_press": 5,
+  "presses": ["조선일보", "한겨레"],
+  "first_seen": "2026-08-30",
+  "last_seen": "2026-09-02",
+  "peak_score": 0.91,
+  "evidence": "근거 문장",
+  "url": "https://...",       // 대표 근거 기사
+  "press": "조선일보",
+  "half_life_days": 45.0,
+  "provenance": "aggregate"
+}
+```
+
+`provenance` 가 없는 엣지는 집계 계층이 생기기 전에 만들어진 것이다.
+`scripts/backfill_edge_observations.py` 가 근거 로그로 옮긴다.
+
+#### edge_observations (관계 근거 로그)
+엣지가 아니라 테이블이다. 기사 한 건이 만든 판정 하나가 한 행이다.
+`(pair_key, url)` 이 유니크라 재수집해도 표본이 부풀지 않는다.
+
+| 컬럼 | 설명 |
+|---|---|
+| `pair_key` | `"이름A\|이름B"` (가나다순). 방향 무관 |
+| `polarity` | +1 우호 / -1 적대 |
+| `score` | NLI 신뢰도 0~1 |
+| `focus_weight` | 1/sqrt(기사 내 의원 수). 나열 기사를 깎는다 |
+| `press`, `camp` | 언론사와 진영(보수/중도/진보) |
+| `simhash` | 본문 앞 1500자의 63비트 지문. 전재 묶음용 |
+| `url`, `title`, `article_date`, `evidence`, `observed_at` | 감사용 |
 
 ---
 

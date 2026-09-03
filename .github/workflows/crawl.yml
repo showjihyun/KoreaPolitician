@@ -59,3 +59,15 @@ jobs:
       - name: SNS pipeline
         if: always() # 뉴스 단계가 실패해도 SNS 는 시도
         run: python backend/crawlers/sns_crawler_pipeline.py
+
+      # 공동발의 그래프. 뉴스는 갈등만 싣고 협력은 싣지 않으므로
+      # (Galtung & Ruge 1965, Soroka 2006), 협력의 증거는 뉴스 밖에서
+      # 가져온다. 자세한 내용은 docs/MEDIA_BIAS_RESEARCH.md 의 알고리즘 3.
+      #
+      # 법안은 매일 크게 바뀌지 않지만 수집이 가벼워(페이지 몇 번) 같이 돈다.
+      # 키가 없으면 스크립트가 안내만 남기고 끝난다.
+      - name: Assembly bills (co-sponsorship)
+        if: always()
+        env:
+          ASSEMBLY_API_KEY: ${{ secrets.ASSEMBLY_API_KEY }}
+        run: python backend/crawlers/assembly_bills_pipeline.py

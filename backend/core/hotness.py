@@ -108,12 +108,15 @@ def ensure_news_schema(db_config=None):
             """)
 
 
-def _focus_weight(mention_count: int) -> float:
+def focus_weight(mention_count: int) -> float:
     """기사 한 건이 여러 의원을 나열할수록 개인당 주목도는 낮다.
 
     개각 기사처럼 10명을 나열한 글과 한 명을 다루는 글을 같게 볼 수는 없다.
     다만 선형으로 나누면 나열 기사가 지나치게 죽으므로 제곱근을 쓴다.
     (1명 -> 1.00, 4명 -> 0.50, 10명 -> 0.32)
+
+    화제성뿐 아니라 관계 근거의 가중치로도 쓴다. 나열 기사에서 뽑아낸
+    쌍은 그 기사의 주제가 아닐 확률이 높기 때문이다.
     """
     return 1.0 / math.sqrt(max(1, mention_count))
 
@@ -150,7 +153,7 @@ def record_news_hotness(base_date: str) -> int:
             names = [n.strip() for n in (politicians or "").split(",") if n.strip()]
             if not names:
                 continue
-            weight = _focus_weight(len(names))
+            weight = focus_weight(len(names))
             pid = _post_id(url, title)
             for name in names:
                 rows.append((

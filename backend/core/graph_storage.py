@@ -185,6 +185,14 @@ class GraphStorage:
                         INSERT INTO system_settings (key, value) VALUES ('last_data_update', CURRENT_DATE::TEXT)
                         ON CONFLICT (key) DO NOTHING;
                     """)
+                    # 관계 근거 로그. 크롤러가 먼저 만들지만, API 만 띄운
+                    # 환경에서도 스키마가 있어야 감사 조회가 가능하다.
+                    # DDL 원본은 core/relation_evidence.py 한 곳에만 둔다.
+                    from core.relation_evidence import OBSERVATION_SCHEMA_SQL
+                    await cur.execute(OBSERVATION_SCHEMA_SQL)
+                    # 공동발의 그래프. DCP 의 '동맹' 정의와 감사 화면이 읽는다.
+                    from core.cosponsorship import COSPONSORSHIP_SCHEMA_SQL
+                    await cur.execute(COSPONSORSHIP_SCHEMA_SQL)
             logger.info("TuringDB persistence tables ready.")
         except Exception:
             # 예전에는 여기서 로그만 남기고 넘어가, 스키마가 없는 채로 서버가
@@ -425,6 +433,36 @@ class GraphStorage:
             "type": rel_type,
             "properties": merged,
         })
+
+    async def remove_edge(self, from_id: str, to_id: str, rel_type: str) -> bool:
+        """엣지 하나를 지운다. 지웠으면 True.
+
+        집계가 극성을 뒤집었을 때 필요하다. POSITIVE_SENTIMENT 와
+        NEGATIVE_SENTIMENT 는 서로 다른 행이라, 새 극성만 쓰면 예전 극성이
+        남아 같은 두 사람 사이에 우호와 적대가 동시에 그려진다.
+        """
+        key = (from_id, to_id, rel_type)
+        edge = self._edge_by_key.pop(key, None)
+        if edge is None:
+            return False
+
+        # 인메모리 인덱스에서 같은 객체를 걷어낸다.
+        self.edges = [e for e in self.edges if e is not edge]
+        self.edges_out[from_id] = [e for e in self.edges_out[from_id] if e is not edge]
+        self.edges_in[to_id] = [e for e in self.edges_in[to_id] if e is not edge]
+
+        if self._pool:
+            try:
+                async with self._pool.connection() as conn:
+                    await conn.execute(
+                        "DELETE FROM turing_edges "
+                        "WHERE source_id = %s AND target_id = %s AND type = %s",
+                        (from_id, to_id, rel_type),
+                    )
+            except Exception:
+                logger.exception("Failed to delete edge")
+                raise
+        return True
 
     def get_node(self, node_id: str) -> Optional[Dict[str, Any]]:
         """노드 조회"""

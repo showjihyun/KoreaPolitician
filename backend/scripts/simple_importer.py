@@ -233,30 +233,24 @@ class SimpleImporter:
         # 대신 국회의원 노드와 정당 노드 간의 BELONGS_TO 관계로 연결성을 유지함
         print("SAME_PARTY 및 SAME_REGION 엣지 폭증 방지를 위해 개별 생성 스킵")
         
-        # 샘플 감정 관계 생성 (향후 실제 데이터 연동 가능)
-        # 특정 의원들 간의 대표적인 관계 예시
-        sentiment_samples = [
-            ("이재명", "나경원", "NEGATIVE_SENTIMENT", 85, "여야 대치 주역"),
-            ("박지원", "안철수", "NEGATIVE_SENTIMENT", 70, "정치적 입장 차이"),
-            ("이재명", "정청래", "POSITIVE_SENTIMENT", 90, "당내 긴밀한 관계"),
-            ("나경원", "안철수", "POSITIVE_SENTIMENT", 60, "여권 내 중진 협력"),
-            ("권성동", "이재명", "NEGATIVE_SENTIMENT", 95, "강력한 정치적 라이벌"),
-        ]
-        
-        for p1_name, p2_name, rel_type, score, desc in sentiment_samples:
-            # 이름으로 노드 찾기
-            p1_nodes = self.storage.find_nodes("Member", {"name": f"CONTAINS:{p1_name}"})
-            p2_nodes = self.storage.find_nodes("Member", {"name": f"CONTAINS:{p2_name}"})
-            
-            if p1_nodes and p2_nodes:
-                await self.storage.add_edge(
-                    p1_nodes[0]["id"], 
-                    p2_nodes[0]["id"], 
-                    rel_type, 
-                    {"score": score, "count": 1, "description": desc}
-                )
-                print(f"샘플 감정 관계 생성: {p1_name} --[{rel_type}]--> {p2_name}")
-    
+        # 샘플 감정 관계는 더 이상 만들지 않는다.
+        #
+        # 예전에는 여기서 손으로 적은 관계 다섯 건을 넣었다. 예를 들어
+        # ("권성동", "이재명", "NEGATIVE_SENTIMENT", 95, "강력한 정치적 라이벌")
+        # 같은 값이다. 문제는 이 값들이 화면과 API 에서 뉴스로 확인한
+        # 관계와 똑같이 보였다는 점이다. 근거 기사도, 언론사도, 관측
+        # 시각도 없는 숫자가 실제 관측과 나란히 놓였고, 점수 척도마저
+        # 달랐다(샘플은 0~100, 실제는 0~1).
+        #
+        # 이 대시보드는 공개된 자료로 신뢰도를 평가받는다. 근거를 댈 수
+        # 없는 관계를 섞는 것은 그 신뢰를 가장 크게 깎는 일이다.
+        # 관계는 core/relation_evidence.py 의 근거 집계만이 만든다.
+        #
+        # 이미 저장된 샘플 엣지는 scripts/backfill_edge_observations.py 가
+        # 찾아서 표시하거나 지운다.
+        print("샘플 감정 관계 생성 안 함 (근거 없는 관계는 만들지 않는다)")
+
+
     def analyze_career_relationships(self, members_data):
         """약력 기반 관계 분석"""
         # 현재 JSON에는 약력 정보가 없으므로 스킵

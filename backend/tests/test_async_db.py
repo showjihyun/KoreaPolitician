@@ -45,6 +45,9 @@ TEST_DB = os.environ.get("POSTGRES_TEST_DB", "korea_politician_test")
 TABLES = (
     "turing_nodes", "turing_edges", "turing_logs",
     "politician_sns_hotness", "politician_hotness_summary", "system_settings",
+    # 관계 근거와 공동발의. init_db 가 함께 만들며, 테스트 사이에 남아 있으면
+    # 다음 테스트가 이전 데이터를 보게 된다.
+    "edge_observations", "assembly_bills", "cosponsorship",
 )
 
 
@@ -390,6 +393,294 @@ def test_write_endpoint_requires_token():
             assert c.post("/api/edge", json=payload).status_code == 503
     finally:
         restore()
+
+
+def test_remove_edge_clears_memory_and_db():
+    """remove_edge 가 인메모리 인덱스와 DB 를 함께 정리한다.
+
+    한쪽만 지우면 API 는 재기동 전까지 있는 것처럼 보이거나, 반대로
+    없는 엣지를 계속 돌려준다.
+    """
+    if _skip():
+        return
+    _reset()
+    storage = GraphStorage()
+    try:
+        run_sync(storage.init_db(CFG))
+        run_sync(storage.add_node("a", ["Member"], {"name": "가"}))
+        run_sync(storage.add_node("b", ["Member"], {"name": "나"}))
+        run_sync(storage.add_edge("a", "b", "NEGATIVE_SENTIMENT", {"score": 0.9}))
+
+        assert run_sync(storage.remove_edge("a", "b", "NEGATIVE_SENTIMENT")) is True
+        rows = run_sync(storage.fetch_all("SELECT count(*) FROM turing_edges"))
+        assert rows[0][0] == 0, "DB 에 엣지가 남았다"
+        assert storage.edges == [], "인메모리 목록에 엣지가 남았다"
+        assert storage.get_relationships("a", direction="out") == []
+        assert storage.get_relationships("b", direction="in") == []
+
+        # 없는 엣지를 지우려 해도 조용히 False 를 돌려준다.
+        assert run_sync(storage.remove_edge("a", "b", "NEGATIVE_SENTIMENT")) is False
+    finally:
+        run_sync(storage.close())
+
+
+def test_one_pair_keeps_one_sentiment_edge():
+    """한 쌍에는 호불호 엣지가 하나만 남아야 한다.
+
+    예전에는 POSITIVE_SENTIMENT 와 NEGATIVE_SENTIMENT 가 서로 다른 행이라,
+    같은 두 사람 사이에 우호와 대립이 동시에 그려질 수 있었다. 이름 정렬이
+    바뀌면 역방향 사본까지 생겼다. 이제 관계는 근거 전체를 집계해 극성
+    하나로 결정되므로, 나머지 감정 엣지는 낡은 값이다.
+    """
+    if _skip():
+        return
+    if pytest is not None:
+        pytest.importorskip("httpx")
+    _reset()
+
+    client, restore = _client_with_env(API_WRITE_TOKEN="test-token")
+    headers = {"X-API-Key": "test-token"}
+    try:
+        with client as c:
+            def post(source, target, edge_type):
+                res = c.post("/api/edge", headers=headers, json={
+                    "source": source, "target": target, "type": edge_type,
+                    "properties": {"score": 0.9, "provenance": "aggregate"},
+                })
+                assert res.status_code == 200, res.text
+
+            post("나경원", "안철수", "NEGATIVE_SENTIMENT")
+            post("나경원", "안철수", "POSITIVE_SENTIMENT")   # 극성이 뒤집힌 재집계
+            post("안철수", "나경원", "POSITIVE_SENTIMENT")   # 역방향 사본
+
+            import api.turingdb_server as server
+            server_sentiment_types = server.SENTIMENT_TYPES
+            sentiment = [e for e in server.graph_storage.edges
+                         if e["type"] in server_sentiment_types]
+            assert len(sentiment) == 1, f"감정 엣지가 {len(sentiment)}개 남았다"
+            assert sentiment[0]["type"] == "POSITIVE_SENTIMENT"
+
+        # DB 는 직접 확인한다. 서버의 풀은 TestClient 가 연 이벤트 루프에
+        # 묶여 있어 run_sync 로는 건드릴 수 없다.
+        with psycopg.connect(**CFG) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT count(*) FROM turing_edges WHERE type = ANY(%s)",
+                    (list(server_sentiment_types),),
+                )
+                assert cur.fetchone()[0] == 1, "DB 에 감정 엣지가 여러 개 남았다"
+    finally:
+        restore()
+
+
+def test_aggregated_evidence_reaches_the_graph_api():
+    """근거 집계 결과가 화면까지 그대로 도착한다.
+
+    프론트는 camp_coverage 로 점선 여부를, display_weight 로 굵기를
+    정한다. 이 값들이 중간에 사라지면 근거가 없는 관계와 교차 검증된
+    관계가 화면에서 똑같아 보인다.
+    """
+    if _skip():
+        return
+    if pytest is not None:
+        pytest.importorskip("httpx")
+    _reset()
+
+    from core import db_config, relation_evidence as ev
+
+    saved_db = os.environ.get("POSTGRES_DB")
+    os.environ["POSTGRES_DB"] = CFG["dbname"]
+    db_config.close_sync_pool()
+    ev.ensure_schema()
+    with db_config.get_sync_pool().connection() as conn:
+        conn.execute("TRUNCATE public.edge_observations")
+
+    # 보수지와 진보지가 각자 취재한 갈등 기사 한 건씩.
+    ev.record_observations([
+        {"entity_a": "나경원", "entity_b": "안철수", "polarity": -1, "score": 0.9,
+         "focus_weight": 1.0, "press": "조선일보", "url": "https://example.com/c",
+         "title": "보수지 기사", "article_date": "20260902",
+         "simhash": ev.simhash("예산결산특별위원회가 정회를 반복했다. " * 12),
+         "evidence": "두 사람은 정면으로 충돌했다"},
+        {"entity_a": "나경원", "entity_b": "안철수", "polarity": -1, "score": 0.85,
+         "focus_weight": 1.0, "press": "한겨레", "url": "https://example.com/p",
+         "title": "진보지 기사", "article_date": "20260902",
+         "simhash": ev.simhash("국정감사 증인 채택 협상이 결렬됐다. " * 12),
+         "evidence": "양측 신경전이 이어졌다"},
+    ])
+
+    key = ev.pair_key("나경원", "안철수")
+    edge = ev.aggregate_pairs([key])[key]
+
+    client, restore = _client_with_env(API_WRITE_TOKEN="test-token")
+    try:
+        with client as c:
+            res = c.post("/api/edge", headers={"X-API-Key": "test-token"}, json={
+                "source": "나경원", "target": "안철수",
+                "type": edge["type"], "properties": edge["properties"],
+            })
+            assert res.status_code == 200, res.text
+
+            graph = c.get("/api/graph/all").json()
+            found = [r for r in graph["relationships"]
+                     if r["type"].endswith("_SENTIMENT")]
+            assert found, "집계된 엣지가 그래프 응답에 없다"
+
+            props = found[0]["properties"]
+            for field in ("camp_coverage", "display_weight", "confidence",
+                          "n_clusters", "n_observations", "camps_agree",
+                          "first_seen", "provenance"):
+                assert field in props, f"화면이 쓰는 {field} 가 유실됐다"
+            assert props["provenance"] == "aggregate"
+            assert props["n_clusters"] == 2
+            assert props["camp_coverage"] > 1 / 3, "진영 교차가 반영되지 않았다"
+    finally:
+        restore()
+        db_config.close_sync_pool()
+        if saved_db is None:
+            os.environ.pop("POSTGRES_DB", None)
+        else:
+            os.environ["POSTGRES_DB"] = saved_db
+
+
+def test_evidence_endpoint_exposes_every_article():
+    """감사 엔드포인트가 근거를 숨기지 않는다.
+
+    reddit 에 약속한 "원본 엣지 + 기사 URL" 덤프다. 전재 기사가 사건
+    하나로 접힌 것까지 보여야 신뢰도 값을 밖에서 검증할 수 있다.
+    """
+    if _skip():
+        return
+    if pytest is not None:
+        pytest.importorskip("httpx")
+    _reset()
+
+    from core import db_config, relation_evidence as ev
+
+    saved_db = os.environ.get("POSTGRES_DB")
+    os.environ["POSTGRES_DB"] = CFG["dbname"]
+    db_config.close_sync_pool()
+    ev.ensure_schema()
+    with db_config.get_sync_pool().connection() as conn:
+        conn.execute("TRUNCATE public.edge_observations")
+
+    wire = "여야가 예산안을 두고 정면 충돌했다. " * 12
+    ev.record_observations([
+        # 같은 전재본을 두 매체가 실었다 -> 사건 하나
+        {"entity_a": "나경원", "entity_b": "안철수", "polarity": -1, "score": 0.9,
+         "focus_weight": 1.0, "press": "연합뉴스", "url": "https://e.example/1",
+         "title": "여야 충돌", "article_date": "20260902",
+         "simhash": ev.simhash(wire), "evidence": "정면 충돌했다"},
+        {"entity_a": "나경원", "entity_b": "안철수", "polarity": -1, "score": 0.9,
+         "focus_weight": 1.0, "press": "조선일보", "url": "https://e.example/2",
+         "title": "여야 충돌", "article_date": "20260902",
+         "simhash": ev.simhash(wire + " 저작권자"), "evidence": "정면 충돌했다"},
+        # 독자 취재 -> 다른 사건
+        {"entity_a": "나경원", "entity_b": "안철수", "polarity": -1, "score": 0.85,
+         "focus_weight": 1.0, "press": "한겨레", "url": "https://e.example/3",
+         "title": "증인 채택 결렬", "article_date": "20260902",
+         "simhash": ev.simhash("국정감사 증인 채택 협상이 결렬됐다. " * 12),
+         "evidence": "협상이 결렬됐다"},
+    ])
+
+    client, restore = _client_with_env(API_WRITE_TOKEN="test-token")
+    try:
+        with client as c:
+            # 쌍 조회: 집계 + 사건 묶음까지
+            res = c.get("/api/relations/evidence", params={"a": "안철수", "b": "나경원"})
+            assert res.status_code == 200, res.text
+            body = res.json()
+            assert body["pair"] == ["나경원", "안철수"], "쌍 키가 가나다순이 아니다"
+            assert len(body["observations"]) == 3, "기사가 누락됐다"
+            assert body["aggregate"]["n_clusters"] == 2
+
+            clusters = {o["cluster"] for o in body["observations"]}
+            assert len(clusters) == 2, "사건 묶음이 드러나지 않는다"
+            wire_clusters = {o["cluster"] for o in body["observations"]
+                             if o["press"] in ("연합뉴스", "조선일보")}
+            assert len(wire_clusters) == 1, "전재본이 같은 사건으로 묶이지 않았다"
+
+            # 감사자가 진영 배정을 확인할 수 있어야 한다
+            camps = {o["press"]: o["camp"] for o in body["observations"]}
+            assert camps["조선일보"] == "보수" and camps["한겨레"] == "진보"
+            assert body["camp_table"], "진영표가 함께 나오지 않는다"
+
+            # 인증 없이 열려 있어야 한다 (읽기 전용 공개 감사)
+            assert c.get("/api/relations/camps").status_code == 200
+
+            # 벌크 덤프 + 페이지네이션
+            first = c.get("/api/relations/evidence", params={"limit": 2}).json()
+            assert first["count"] == 2 and first["next_cursor"] is not None
+            second = c.get("/api/relations/evidence",
+                           params={"limit": 2, "cursor": first["next_cursor"]}).json()
+            assert second["count"] == 1 and second["next_cursor"] is None
+            seen = {o["url"] for o in first["observations"] + second["observations"]}
+            assert len(seen) == 3, "페이지를 넘기며 행이 겹치거나 빠졌다"
+
+            # 기록이 없는 쌍은 404
+            assert c.get("/api/relations/evidence",
+                         params={"a": "이재명", "b": "한동훈"}).status_code == 404
+    finally:
+        restore()
+        db_config.close_sync_pool()
+        if saved_db is None:
+            os.environ.pop("POSTGRES_DB", None)
+        else:
+            os.environ["POSTGRES_DB"] = saved_db
+
+
+def test_dcp_allies_come_from_cosponsorship():
+    """동맹을 '같은 정당' 으로 정의하면 정파 구조를 증폭한다.
+
+    예전 정의로는 같은 당 의원 전체가 서로 동맹이라 공명 점수가 사실상
+    정당 소속을 되풀이했다. 공동발의는 뉴스와 무관하게 기록되는 협력의
+    직접 증거다.
+    """
+    if _skip():
+        return
+    if pytest is not None:
+        pytest.importorskip("httpx")
+    _reset()
+
+    from core import cosponsorship as cs, db_config
+
+    saved_db = os.environ.get("POSTGRES_DB")
+    os.environ["POSTGRES_DB"] = CFG["dbname"]
+    db_config.close_sync_pool()
+
+    client, restore = _client_with_env(API_WRITE_TOKEN="test-token")
+    try:
+        with client as c:
+            # 자료가 없으면 예전 정의로 물러서되 그 사실을 밝힌다.
+            body = c.get("/api/dcp/context",
+                         params={"subject": "나경원", "target": "정청래"}).json()
+            assert body["ally_basis"] == "same_party_fallback"
+            party_allies = body["ally_count"]
+            assert party_allies > 10, "같은 당 전체가 동맹으로 잡혀야 예전 동작이다"
+
+            cs.ensure_schema()
+            with db_config.get_sync_pool().connection() as conn:
+                conn.execute("TRUNCATE public.assembly_bills")
+                conn.execute("TRUNCATE public.cosponsorship")
+            cs.save_bills([
+                {"bill_id": "B1", "rst_proposer": "나경원",
+                 "publ_proposer": "안철수", "propose_dt": "20260901", "age": "22"},
+                {"bill_id": "B2", "rst_proposer": "안철수",
+                 "publ_proposer": "나경원", "propose_dt": "20260902", "age": "22"},
+            ])
+            cs.rebuild_pairs(["나경원", "안철수", "정청래"], age="22")
+
+            body = c.get("/api/dcp/context",
+                         params={"subject": "나경원", "target": "정청래"}).json()
+            assert body["ally_basis"] == "cosponsorship"
+            assert body["ally_count"] < party_allies, "여전히 정당 전체를 세고 있다"
+    finally:
+        restore()
+        db_config.close_sync_pool()
+        if saved_db is None:
+            os.environ.pop("POSTGRES_DB", None)
+        else:
+            os.environ["POSTGRES_DB"] = saved_db
 
 
 def test_limit_is_clamped():

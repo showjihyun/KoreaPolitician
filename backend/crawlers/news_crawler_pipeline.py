@@ -9,14 +9,14 @@ from bs4 import BeautifulSoup
 import sys
 import psycopg
 from core.name_matcher import find_names
-from core.hotness import ensure_news_schema, rebuild_from_news
+from core.hotness import ensure_news_schema, focus_weight, rebuild_from_news
+from core import relation_evidence
 from core.db_config import (api_base_url, close_sync_pool,
                             db_config_from_env, env, get_sync_pool)
 import logging
 import traceback
 import json
 from crawlers.affective_analysis import AffectiveAnalyzer
-from core.dcp_algorithm import DCPCalculator
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -58,8 +58,17 @@ except Exception as e:
     logger.error(f"Failed to initialize AffectiveAnalyzer: {e}")
     analyzer = None
 
-dcp_calc = DCPCalculator()
-logger.info("DCPCalculator 초기화 성공")
+# DCP(Dynamic Contextual Propagation)는 이 파이프라인에서 더 이상 쓰지 않는다.
+# 두 가지 이유다. 첫째, 운영 환경에서는 동작한 적이 없다. DCPCalculator 가
+# 동맹 문맥을 http://localhost:5000 에서 가져오도록 되어 있어 GitHub Actions
+# 에서는 매번 실패하고 입력값을 그대로 돌려줬다. 즉 social_impact_score 는
+# 늘 score 와 같았다. 둘째, 동맹을 "같은 정당"으로 정의하기 때문에 정파
+# 구조를 보정하는 게 아니라 증폭한다.
+#
+# 대체 계획은 docs/MEDIA_BIAS_RESEARCH.md 의 알고리즘 3이다. 동맹을 국회
+# 공동발의로 정의해 뉴스 밖 근거로 바꾼 뒤 다시 켠다. 그때까지
+# social_impact_score 는 근거 집계가 진영 교차 검증을 반영해 채운다.
+# core/dcp_algorithm.py 는 그 작업의 출발점으로 남겨 둔다.
 
 # 네이버 기사 본문 컨테이너. 앞에서부터 먼저 잡히는 것을 쓴다.
 NAVER_BODY_SELECTORS = ("#dic_area", "#newsct_article", "#articeBody", "#articleBodyContents")
@@ -198,7 +207,71 @@ def wake_api(timeout: int = 180) -> bool:
     return False
 
 
-def save_to_turingdb(results):
+def save_observations(art):
+    """기사 하나가 만든 관계 판정을 근거 로그에 쌓고, 건드린 쌍을 돌려준다.
+
+    예전에는 여기서 곧바로 /api/edge 로 엣지를 밀어 넣었다. 그러면 엣지가
+    "마지막에 처리된 기사" 하나로 덮여, 몇 건의 기사가 어느 언론사에서
+    나왔는지가 남지 않았다. 이제 기사는 근거만 남기고, 엣지는 파이프라인
+    끝에서 쌍별로 집계해 한 번만 쓴다.
+    """
+    rels = art.get('relationships') or []
+    if not rels:
+        return []
+
+    # 본문 지문. 통신사 전재 기사를 한 사건으로 묶는 데 쓴다.
+    body_hash = relation_evidence.simhash(art.get('content', ''))
+    # 나열 기사에서 뽑은 쌍은 그 기사의 주제가 아닐 확률이 높다.
+    weight = focus_weight(len(art.get('politicians') or []))
+
+    rows = []
+    for rel in rels:
+        # holder/target 은 이 기사가 판단한 방향이다. 발화 주체를 가릴 수
+        # 없으면(상호 공방이거나 근거가 약하면) 비어 있다.
+        direction = rel.get('direction')
+        rows.append({
+            "entity_a": rel['entity_a'],
+            "entity_b": rel['entity_b'],
+            "polarity": 1 if rel['type'] == relation_evidence.POSITIVE else -1,
+            "score": rel['score'],
+            "focus_weight": weight,
+            "stance_weight": rel.get('stance_weight', 1.0),
+            "holder": rel.get('holder') if direction != 'mutual' else None,
+            "target": rel.get('target') if direction != 'mutual' else None,
+            "evidence_type": rel.get('evidence_type'),
+            "hedged": rel.get('hedged', False),
+            "press": art.get('press'),
+            "url": art['url'],
+            "title": art.get('title'),
+            "article_date": art.get('date'),
+            "simhash": body_hash,
+            "evidence": rel.get('evidence', ""),
+        })
+
+    try:
+        relation_evidence.record_observations(rows)
+    except Exception as e:
+        logger.error(f"[근거 저장 실패] {art.get('url')} -> {e}")
+        return []
+    return [relation_evidence.pair_key(r['entity_a'], r['entity_b']) for r in rows]
+
+
+def push_aggregated_edges(pair_keys):
+    """쌍별로 근거를 집계해 엣지를 한 번씩만 쓴다.
+
+    기사마다 POST 하던 것을 쌍마다 POST 로 바꾼다. 호출 수가 줄고, 무엇보다
+    엣지에 실리는 값이 기사 한 건이 아니라 관측 전체의 집계가 된다.
+    """
+    keys = sorted(set(k for k in pair_keys if k))
+    if not keys:
+        return 0, 0
+
+    try:
+        edges = relation_evidence.aggregate_pairs(keys)
+    except Exception as e:
+        logger.error(f"[관계 집계 실패] {e}")
+        return 0, 0
+
     # 배포 환경(GitHub Actions 등)에서는 API_BASE_URL 로 백엔드 주소를 지정한다.
     api_url = api_base_url() + "/api/edge"
     # 쓰기 엔드포인트는 인증을 요구한다.
@@ -206,31 +279,33 @@ def save_to_turingdb(results):
     write_token = env("API_WRITE_TOKEN")
     if write_token:
         headers["X-API-Key"] = write_token
-    count = 0
-    for art in results:
-        if 'relationships' not in art: continue
-        for rel in art['relationships']:
-            try:
-                payload = {
-                    "source": rel['entity_a'],
-                    "target": rel['entity_b'],
-                    "type": rel['type'],
-                    "properties": {
-                        "score": rel['score'],
-                        "social_impact_score": rel.get('social_impact_score', 0.0),
-                        "evidence": rel.get('evidence', "")[:200],
-                        "url": art['url'],
-                        "date": art['date']
-                    }
-                }
-                # 타임아웃이 없으면 슬립 중인 무료 인스턴스를 깨우는 동안
-                # 무한 대기할 수 있다.
-                response = requests.post(api_url, json=payload,
-                                         headers=headers, timeout=60)
-                if response.status_code == 200: count += 1
-            except Exception as e:
-                logger.error(f"Error saving to TuringDB: {e}")
-    return count
+
+    saved = 0
+    for key, edge in edges.items():
+        entity_a, entity_b = relation_evidence.split_pair_key(key)
+        payload = {
+            "source": entity_a,
+            "target": entity_b,
+            "type": edge["type"],
+            "properties": edge["properties"],
+        }
+        try:
+            # 타임아웃이 없으면 슬립 중인 무료 인스턴스를 깨우는 동안
+            # 무한 대기할 수 있다.
+            response = requests.post(api_url, json=payload,
+                                     headers=headers, timeout=60)
+            if response.status_code == 200:
+                saved += 1
+            else:
+                logger.warning(
+                    f"[엣지 저장 거부] {key} {response.status_code} {response.text[:120]}")
+        except Exception as e:
+            logger.error(f"Error saving to TuringDB: {e}")
+
+    skipped = len(keys) - len(edges)
+    if skipped:
+        logger.info(f"[관계 집계] 근거가 기준에 못 미쳐 보류한 쌍 {skipped}개")
+    return saved, len(edges)
 
 def crawl_custom_news_list(date_str, sid1="100", max_pages=1):
     base_url = "https://news.naver.com/main/list.naver?mode=LSD&mid=sec"
@@ -517,14 +592,20 @@ def crawl_nhk_search(keyword, max_articles=3):
 
 def process_article(art, db_config, seen_titles, seen_contents):
     try:
+        # 같은 제목/본문이 여러 URL 로 들어오는 것을 여기서 한 번 걸러낸다.
+        # 예전에는 검사만 하고 집합에 넣지 않아 이 두 줄이 아무 일도 하지
+        # 않았다. 통신사 전재 기사가 그대로 통과해 분석 비용을 반복해서
+        # 썼다. 남은 전재는 근거 집계 단계에서 SimHash 로 한 사건으로 묶인다.
         title_hash = hashlib.md5(art['title'].encode('utf-8')).hexdigest()
         if title_hash in seen_titles: return None
+        seen_titles.add(title_hash)
 
         content = get_article_text(art['url'])
         if len(content) < 150: return None
 
         content_hash = hashlib.md5(content[:500].encode('utf-8')).hexdigest()
         if content_hash in seen_contents: return None
+        seen_contents.add(content_hash)
 
         found_names = extract_politicians(content, POLITICIANS)
         if not found_names: return None
@@ -535,10 +616,14 @@ def process_article(art, db_config, seen_titles, seen_contents):
                 for j in range(i+1, len(found_names)):
                     p1, p2 = found_names[i], found_names[j]
                     try:
-                        rtype, score, evidence = analyzer.analyze_relationship(content, p1, p2)
-                        if rtype:
-                            fscore = dcp_calc.calculate_impact_score(p1, p2, rtype, score)
-                            relationships.append({"entity_a": p1, "entity_b": p2, "type": rtype, "score": score, "social_impact_score": fscore, "evidence": evidence})
+                        # found_names 를 함께 넘긴다. 창 안에서 이름을 다시
+                        # 확인할 때 더 긴 이름(김윤덕)을 알아야 짧은 이름
+                        # (김윤)의 오탐을 막을 수 있다.
+                        result = analyzer.analyze_pair(content, p1, p2, found_names)
+                        if result:
+                            relationships.append({
+                                "entity_a": p1, "entity_b": p2, **result,
+                            })
                     except: continue
             art['relationships'] = relationships
 
@@ -547,9 +632,9 @@ def process_article(art, db_config, seen_titles, seen_contents):
         art['base_date'] = datetime.now().strftime('%Y%m%d')
 
         save_to_postgresql([art], db_config)
-        save_to_turingdb([art])
+        pairs = save_observations(art)
 
-        return art['title']
+        return art['title'], pairs
     except Exception as e:
         logger.error(f"Error processing {art.get('title', 'Unknown')}: {e}")
         return None
@@ -629,6 +714,7 @@ def run_pipeline(db_config):
     total_saved = 0
     seen_titles = set()
     seen_contents = set()
+    touched_pairs = []
 
     with ThreadPoolExecutor(max_workers=8) as analysis_executor:
         future_to_art = {analysis_executor.submit(process_article, art, db_config, seen_titles, seen_contents): art for art in unique_news}
@@ -637,12 +723,23 @@ def run_pipeline(db_config):
                 result = future.result()
                 processed_count += 1
                 if result:
+                    title, pairs = result
+                    touched_pairs.extend(pairs)
                     total_saved += 1
-                    logger.info(f"[{total_saved}/{len(unique_news)}] 업데이트/저장 완료: {result[:30]}...")
+                    logger.info(f"[{total_saved}/{len(unique_news)}] 업데이트/저장 완료: {title[:30]}...")
             except Exception as e:
                 logger.error(f"Error processing article: {e}")
 
     logger.info(f"[파이프라인 실행 종료] 총 {total_saved}개 기사 처리됨")
+
+    # 6. 관계 집계. 기사 단위 판정을 쌍 단위로 모아 엣지를 다시 쓴다.
+    #
+    # 이 단계가 없으면 엣지는 마지막 기사 하나로 덮인다. 여기서 통신사
+    # 전재를 한 사건으로 묶고(SimHash), 진영이 다른 매체가 같은 극성을
+    # 보도했는지 세고(교차 검증), 오래된 근거의 무게를 줄인다(반감기).
+    if touched_pairs:
+        saved, total = push_aggregated_edges(touched_pairs)
+        logger.info(f"[관계 집계] 쌍 {len(set(touched_pairs))}개 중 {total}개 승격, {saved}개 저장")
 
     # 수집한 뉴스로 화제성을 산출한다. X/인스타는 비로그인 수집이 막혔고
     # 유튜브도 불안정해 화제성 테이블이 계속 비어 있었다. 뉴스 언급 빈도는
@@ -666,6 +763,7 @@ if __name__ == "__main__":
     exit_code = 0
     try:
         ensure_news_schema()
+        relation_evidence.ensure_schema()
         # 무료 인스턴스는 자고 있다. 먼저 깨워야 관계 저장이 유실되지 않는다.
         if not wake_api():
             logger.warning("API 를 깨우지 못했습니다. 관계 저장은 실패할 수 있으나 "
