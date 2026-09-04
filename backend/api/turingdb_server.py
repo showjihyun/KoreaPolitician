@@ -202,6 +202,14 @@ async def graph_all(limit: int = Query(350, ge=1, le=1000)):
         # 관계가 소속/지역/SNS 언급에 밀려 잘려 나간다. 이 화면의 핵심은
         # 호불호이므로 감정 관계를 먼저 담는다.
         rels = graph_storage.get_relationships(member_id, direction="out")
+        # 상대 노드가 없는 엣지는 보내지 않는다.
+        #
+        # REPRESENTS 는 선거구를 가리키는데 선거구 노드는 적재하지 않는다.
+        # 그래서 응답에 허공을 가리키는 엣지가 296개, 전체의 3분의 1이
+        # 실려 나가고 있었다. 화면은 어차피 버리므로 그만큼이 순수한
+        # 낭비였고, 더 나쁘게는 아래 의원당 10개 제한에서 자리를 한 칸씩
+        # 차지해 실제 관계를 밀어냈다.
+        rels = [r for r in rels if r["node"]]
         rels.sort(key=lambda r: 0 if r["edge"]["type"].endswith("_SENTIMENT") else 1)
         for rel in rels[:10]:  # 각 의원당 최대 10개 관계
             relationships.append(rel["edge"])
