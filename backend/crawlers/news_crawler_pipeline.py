@@ -289,8 +289,15 @@ def crawl_custom_news_list(date_str, sid1="100", max_pages=1):
                     if not link_el: continue
                     url = link_el.get_attribute("href")
                     title = link_el.inner_text().strip()
+                    # 언론사를 빈 값으로 두던 자리다. 지금은 언론사가 진영
+                    # 교차 검증의 입력이라, 비워 두면 그 기사에서 나온 관계가
+                    # 전부 진영 미상(중도)으로 떨어진다. 실제로 이 함수가
+                    # 만든 한 회차의 기사 67건이 그렇게 들어가 있었다.
+                    press_el = item.query_selector("span.writing")
+                    press = press_el.inner_text().strip() if press_el else ""
                     if url and title:
-                        articles.append({"title": title, "url": url, "date": date_str, "press": ""})
+                        articles.append({"title": title, "url": url,
+                                         "date": date_str, "press": press})
             except Exception as e:
                 logger.error(f"Error crawling {target_url}: {e}")
         browser.close()
