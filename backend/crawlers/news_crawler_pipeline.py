@@ -12,7 +12,7 @@ from core.name_matcher import find_names
 from core.hotness import ensure_news_schema, focus_weight, rebuild_from_news
 from core import relation_evidence
 from core.db_config import (api_base_url, close_sync_pool,
-                            db_config_from_env, get_sync_pool)
+                            db_config_from_env, env, get_sync_pool)
 import logging
 import traceback
 import json
@@ -143,6 +143,10 @@ def extract_politicians(text, name_list):
     # 김현·박정·손솔·허영·황희)이 김건희·박정희·허영심·김윤덕 같은 낱말의
     # 앞부분과 겹쳐 실제 언급이 없는 관계를 만들어냈다.
     return find_names(text, name_list)
+
+#: 한 회차에 분석할 기사 수 상한. NEWS_MAX_ARTICLES 로 조절한다.
+#: 왜 필요한지는 run_pipeline 의 "분석량 상한" 주석에 적었다.
+NEWS_MAX_ARTICLES = int(env("NEWS_MAX_ARTICLES", "300"))
 
 # CPU 코어의 80%를 사용하여 병렬 처리 수 결정
 MAX_WORKERS = max(1, int((os.cpu_count() or 4) * 0.8))
@@ -424,12 +428,46 @@ def crawl_naver_section(sid1, max_pages=SECTION_MAX_PAGES):
     logger.info(f"[{section_name}] 크롤링 종료. 총 {len(articles)}개 유효 기사 수집.")
     return articles
 
+# 네이버 뉴스 검색 결과에서 기사 한 건을 뽑는 스크립트.
+#
+# 예전 셀렉터(a.news_tit, .info_group .press)는 네이버가 검색 화면을
+# sds-comps-* 컴포넌트로 갈아엎으면서 전부 0건이 됐다. 그런데 컨테이너인
+# .list_news 는 그대로 남아 있어서 wait_for_selector 는 통과했고, 항목 루프가
+# `if not title_el: continue` 로 조용히 다 건너뛰었다. 예외도 경고도 없이
+# 의원 296명 검색이 매일 0건을 돌려주고 있었다. 섹션 크롤링이 물어 오는
+# 기사만으로 파이프라인이 돌아가고 있었던 셈이다.
+#
+# 그래서 이번에는 (1) 실제로 몇 건을 건졌는지 세어 0이면 경고를 남기고,
+# (2) 언론사는 클래스 이름 대신 "제목 링크에서 위로 올라가며 언론사 칸을
+# 가진 조상을 찾는" 방식으로 잡는다. 네이버가 클래스명을 또 바꿔도 구조가
+# 유지되면 살아남는다.
+_NAVER_SEARCH_EXTRACT = """() => {
+  const TITLE = 'span.sds-comps-text-type-headline1';
+  const PRESS = 'span.sds-comps-profile-info-title-text';
+  const out = [];
+  document.querySelectorAll(`a:has(${TITLE})`).forEach((a) => {
+    const title = (a.querySelector(TITLE)?.innerText || '').trim();
+    if (!title || !a.href) return;
+    let press = '';
+    let node = a;
+    for (let i = 0; i < 6 && node; i++) {
+      node = node.parentElement;
+      const el = node && node.querySelector(PRESS);
+      if (el) { press = (el.innerText || '').split('\\n')[0].trim(); break; }
+    }
+    out.push({ title, url: a.href, press });
+  });
+  return out;
+}"""
+
+
 def crawl_naver_news_search(keyword, max_articles=10):
     articles = []
     end_date = datetime.now()
     start_date = end_date - timedelta(days=365)
     ds = start_date.strftime("%Y.%m.%d")
     de = end_date.strftime("%Y.%m.%d")
+    seen = set()
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -443,30 +481,40 @@ def crawl_naver_news_search(keyword, max_articles=10):
 
             try:
                 page.goto(search_url, timeout=30000)
-                page.wait_for_selector(".list_news, .news_list", timeout=15000)
-                items = page.query_selector_all("li.bx, div.news_area")
+                page.wait_for_selector("span.sds-comps-text-type-headline1", timeout=15000)
+                rows = page.evaluate(_NAVER_SEARCH_EXTRACT)
 
-                if not items: break
+                if not rows:
+                    break
 
-                for item in items:
-                    title_el = item.query_selector("a.news_tit, a.tit")
-                    if not title_el: continue
-                    title = title_el.inner_text().strip()
-                    url = title_el.get_attribute("href")
-                    press = item.query_selector(".info_group .press, .info.press").inner_text().strip() if item.query_selector(".info_group .press, .info.press") else "Naver"
+                for row in rows:
+                    url = row.get("url")
+                    if not url or url in seen:
+                        continue
+                    seen.add(url)
+                    articles.append({
+                        "title": row["title"],
+                        "url": url,
+                        # 언론사를 못 읽으면 진영을 배정할 수 없다. 빈 값으로
+                        # 두면 집계가 "미상" 으로 다루고 중도로 떨어뜨린다.
+                        "press": row.get("press") or "",
+                        "date": datetime.now().strftime("%Y-%m-%d"),
+                    })
+                    if len(articles) >= max_articles:
+                        break
 
-                    if url and title and not any(a['url'] == url for a in articles):
-                        articles.append({"title": title, "url": url, "press": press, "date": datetime.now().strftime("%Y-%m-%d")})
-
-                    if len(articles) >= max_articles: break
-
-                if len(articles) >= max_articles: break
+                if len(articles) >= max_articles:
+                    break
 
             except Exception as e:
                 logger.warning(f"Search crawl failed for {keyword} (page {page_num+1}): {e}")
                 break
 
         browser.close()
+
+    # 조용한 0건이 이 함수의 예전 실패 방식이었다. 이제는 드러낸다.
+    if not articles:
+        logger.warning(f"[검색 0건] '{keyword}' — 네이버 검색 마크업이 또 바뀌었는지 확인할 것")
     return articles
 
 def crawl_cnn_search(keyword, max_articles=3):
@@ -667,7 +715,21 @@ def run_pipeline(db_config):
         if n['url'] not in seen_urls:
             unique_news.append(n)
             seen_urls.add(n['url'])
-    logger.info(f"분석 대상 기사 총합: {len(unique_news)}개")
+
+    # 4. 분석량 상한
+    #
+    # 의원별 검색이 고쳐지기 전에는 기사가 하루 30건 안팎이라 상한이 필요
+    # 없었다. 이제 296명 검색이 실제로 결과를 물어 오므로 수백 건이 된다.
+    # 기사 한 건은 본문 내려받기 + 등장 의원 쌍마다 NLI 4회라, 그냥 두면
+    # GitHub Actions 90분 한도를 넘겨 수집분이 통째로 버려진다.
+    #
+    # 실측 기준선: 기사 37건 분석에 6분(스레드 8개). 상한 300이면 약 50분.
+    # 로그에 분석 소요 시간을 남기므로, 여유가 보이면 이 값을 올리면 된다.
+    collected = len(unique_news)
+    if len(unique_news) > NEWS_MAX_ARTICLES:
+        unique_news = unique_news[:NEWS_MAX_ARTICLES]
+    logger.info(f"분석 대상 기사 총합: {len(unique_news)}개 "
+                f"(수집 {collected}개, 상한 {NEWS_MAX_ARTICLES})")
 
     # 5. 분석 및 저장 (병렬)
     processed_count = 0
@@ -675,6 +737,7 @@ def run_pipeline(db_config):
     seen_titles = set()
     seen_contents = set()
     touched_pairs = []
+    analysis_started = time.time()
 
     with ThreadPoolExecutor(max_workers=8) as analysis_executor:
         future_to_art = {analysis_executor.submit(process_article, art, db_config, seen_titles, seen_contents): art for art in unique_news}
@@ -690,7 +753,8 @@ def run_pipeline(db_config):
             except Exception as e:
                 logger.error(f"Error processing article: {e}")
 
-    logger.info(f"[파이프라인 실행 종료] 총 {total_saved}개 기사 처리됨")
+    logger.info(f"[파이프라인 실행 종료] 총 {total_saved}개 기사 처리됨 "
+                f"(분석 {time.time() - analysis_started:.0f}초)")
 
     # 6. 관계 집계. 기사 단위 판정을 쌍 단위로 모아 엣지를 다시 쓴다.
     #
