@@ -683,6 +683,54 @@ def test_dcp_allies_come_from_cosponsorship():
             os.environ["POSTGRES_DB"] = saved_db
 
 
+def test_edge_goes_to_the_exactly_named_member():
+    """짧은 이름이 긴 이름에게 관계를 빼앗기면 안 된다.
+
+    22대에는 박정·박정하·박정현·박정훈이 함께 있다. /api/edge 가 이름을
+    부분일치로 찾고 첫 결과를 쓰던 시절, "박정" 으로 넣은 관계 세 건이
+    "박정하" 에게 붙었다. 관계를 엉뚱한 사람에게 귀속시키는 것은 이
+    프로젝트가 낼 수 있는 가장 나쁜 오류다.
+    """
+    if _skip():
+        return
+    if pytest is not None:
+        pytest.importorskip("httpx")
+    _reset()
+
+    client, restore = _client_with_env(API_WRITE_TOKEN="test-token")
+    try:
+        with client as c:
+            res = c.post("/api/edge", headers={"X-API-Key": "test-token"}, json={
+                "source": "박정", "target": "백혜련",
+                "type": "POSITIVE_SENTIMENT", "properties": {"score": 0.9},
+            })
+            assert res.status_code == 200, res.text
+
+            import api.turingdb_server as server
+            names = {n["id"]: n["properties"].get("name")
+                     for n in server.graph_storage.find_nodes("Member")}
+            # 같은 앞글자를 공유하는 의원들이 실제로 함께 있어야 시험이 의미가 있다.
+            similar = {v for v in names.values() if v and v.startswith("박정")}
+            assert len(similar) > 1, f"비슷한 이름이 없어 시험이 무의미하다: {similar}"
+
+            # 인메모리 그래프는 앞선 테스트의 엣지를 들고 있을 수 있으므로
+            # 백혜련에게 붙은 것만 본다.
+            landed = [e for e in server.graph_storage.edges
+                      if e["type"] in server.SENTIMENT_TYPES
+                      and names.get(e["to"]) == "백혜련"]
+            assert len(landed) == 1, f"엣지가 {len(landed)}개 생겼다"
+            assert names[landed[0]["from"]] == "박정", (
+                f"관계가 엉뚱한 의원에게 붙었다: {names[landed[0]['from']]}")
+
+            # 정확한 이름이 없을 때만 부분일치로 물러선다.
+            assert server.resolve_member("박정")["properties"]["name"] == "박정"
+            partial = server.resolve_member("박정하")
+            assert partial and partial["properties"]["name"] == "박정하"
+            assert server.resolve_member("없는사람") is None
+    finally:
+        restore()
+
+
 def test_limit_is_clamped():
     """limit 이 SQL LIMIT 로 그대로 흘러가 OOM 을 만들지 않는다."""
     if _skip():

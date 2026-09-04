@@ -75,6 +75,29 @@ class EdgeRequest(BaseModel):
 #: 호불호 관계 타입. 한 쌍에는 이 중 하나만 남는다.
 SENTIMENT_TYPES = ("POSITIVE_SENTIMENT", "NEGATIVE_SENTIMENT")
 
+
+def resolve_member(name: str):
+    """이름으로 의원 노드를 찾는다. 정확히 같은 이름이 먼저다.
+
+    부분일치만 쓰면 짧은 이름이 긴 이름에 흡수된다. 22대에는 박정·박정하·
+    박정현·박정훈이 함께 있어서, "박정" 으로 넣은 관계가 "박정하" 에게
+    붙었다. 실제로 그렇게 붙은 엣지가 세 건 있었다. 관계를 엉뚱한 사람에게
+    귀속시키는 것은 이 프로젝트가 낼 수 있는 가장 나쁜 오류다.
+
+    core/name_matcher.py 가 본문에서 같은 문제를 막고 있는데, API 경계에는
+    같은 방어가 없었다.
+    """
+    wanted = (name or "").strip()
+    if not wanted:
+        return None
+    exact = graph_storage.find_nodes("Member", {"name": wanted})
+    if exact:
+        return exact[0]
+    # 정확히 맞는 이름이 없을 때만 부분일치로 물러선다. 검색창처럼
+    # 사람이 일부만 친 경우를 위해서다.
+    loose = graph_storage.find_nodes("Member", {"name": f"CONTAINS:{wanted}"})
+    return loose[0] if loose else None
+
 # CORS 설정
 # allow_origins=["*"] 와 allow_credentials=True 를 함께 쓰면 스펙상 무효이며,
 # Starlette 는 요청 Origin 을 그대로 반영해 사실상 모든 출처에 인증 포함
@@ -347,16 +370,16 @@ def search(member_name: str):
 async def add_edge(req: EdgeRequest, _auth: None = Depends(require_write_token)):
     """관계 추가"""
     # Find source and target nodes by name
-    src_nodes = graph_storage.find_nodes("Member", {"name": f"CONTAINS:{req.source}"})
-    tgt_nodes = graph_storage.find_nodes("Member", {"name": f"CONTAINS:{req.target}"})
+    src_node = resolve_member(req.source)
+    tgt_node = resolve_member(req.target)
 
-    if not src_nodes:
+    if not src_node:
         return JSONResponse(content={"message": f"Source member '{req.source}' not found"}, status_code=404)
-    if not tgt_nodes:
+    if not tgt_node:
         return JSONResponse(content={"message": f"Target member '{req.target}' not found"}, status_code=404)
 
-    src_id = src_nodes[0]["id"]
-    tgt_id = tgt_nodes[0]["id"]
+    src_id = src_node["id"]
+    tgt_id = tgt_node["id"]
 
     try:
         edge = await graph_storage.add_edge(src_id, tgt_id, req.type, req.properties)
@@ -564,9 +587,9 @@ def dcp_context(subject: str, target: str):
     ally_basis = "cosponsorship"
     if cosponsorship.is_populated():
         for name, _bills in cosponsorship.allies_of(subject):
-            nodes = graph_storage.find_nodes("Member", {"name": f"CONTAINS:{name}"})
-            if nodes:
-                allies.add(nodes[0]["id"])
+            ally_node = resolve_member(name)
+            if ally_node:
+                allies.add(ally_node["id"])
     elif sub_party:
         ally_basis = "same_party_fallback"
         party_members = graph_storage.find_nodes("Member", {"party": sub_party})
