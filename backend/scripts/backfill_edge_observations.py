@@ -114,6 +114,19 @@ def _normalise_legacy_score(score: float) -> float:
 
 def backfill(drop_unsourced: bool = False, dry_run: bool = False,
               push: bool = False) -> None:
+    # --push 는 requests 로 API 에 POST 한다. 없는 것을 관측 적재가 끝난
+    # 뒤에 알면, 어디까지 됐는지 모르는 상태로 멈춘다. 시작 전에 막는다.
+    if push and not dry_run:
+        try:
+            import requests  # noqa: F401
+        except ImportError:
+            logger.error("--push 에는 requests 가 필요합니다: pip install requests")
+            logger.error("(requirements-api.txt 에는 없고 requirements.txt 에 있습니다)")
+            return
+        if not api_base_url() or api_base_url().startswith("http://localhost"):
+            logger.warning("API_BASE_URL 이 %s 입니다. 운영에 반영하려면 배포된 "
+                           "백엔드 주소를 넣으십시오.", api_base_url())
+
     names = _node_names()
     edges = _sentiment_edges()
     logger.info("호불호 엣지 %d개를 확인한다.", len(edges))
