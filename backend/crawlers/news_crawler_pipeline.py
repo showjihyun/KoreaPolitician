@@ -18,7 +18,7 @@ import traceback
 import json
 from crawlers.affective_analysis import AffectiveAnalyzer
 import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
 
 # Load environment variables from .env file
 load_dotenv()
@@ -147,6 +147,28 @@ def extract_politicians(text, name_list):
 #: 한 회차에 분석할 기사 수 상한. NEWS_MAX_ARTICLES 로 조절한다.
 #: 왜 필요한지는 run_pipeline 의 "분석량 상한" 주석에 적었다.
 NEWS_MAX_ARTICLES = int(env("NEWS_MAX_ARTICLES", "300"))
+
+#: 수집 + 분석에 쓸 수 있는 시간(초). 넘기면 분석을 멈추고 집계로 넘어간다.
+#:
+#: 상한(NEWS_MAX_ARTICLES)만으로는 시간을 못 막는다. 기사 한 건의 비용이
+#: 본문 길이와 등장 의원 수에 따라 크게 달라지기 때문이다. 실제로 2026-09-04
+#: 부터 09-09 까지 여섯 회차가 전부 GitHub Actions 90분 한도에 걸려 취소됐고,
+#: 마지막 회차는 300건 중 140건째에서 잘렸다.
+#:
+#: 문제는 느린 것 자체가 아니라 **잘리는 위치**였다. 기사 저장은 기사마다
+#: 하지만 엣지 집계와 화제성 산출은 분석 루프가 끝난 뒤에 한 번 도는 구조라,
+#: 루프 도중에 죽으면 그날 수집분이 화면에 하나도 반영되지 않는다. API 의
+#: last_updated 가 2026-09-03 에 멈춰 있던 이유가 이것이다.
+#:
+#: 그래서 시간을 러너가 아니라 파이프라인이 재게 한다. 예산을 넘기면 남은
+#: 기사를 버리고 집계·화제성을 반드시 돌린다. 그날 분석한 만큼은 반드시
+#: 화면에 나가고, 못 본 기사는 다음 회차가 가져간다.
+NEWS_TIME_BUDGET_SEC = int(env("NEWS_TIME_BUDGET_SEC", "5400"))
+
+#: 그중 수집(섹션 크롤링 + 의원 296명 검색)에 허용하는 시간(초).
+#: 실측 약 11분. 네이버 검색이 응답하지 않으면 296명 x 2회 x 30초 타임아웃이
+#: 예산을 통째로 먹으므로 따로 막아 둔다.
+NEWS_COLLECT_BUDGET_SEC = int(env("NEWS_COLLECT_BUDGET_SEC", "1800"))
 
 # CPU 코어의 80%를 사용하여 병렬 처리 수 결정
 MAX_WORKERS = max(1, int((os.cpu_count() or 4) * 0.8))
@@ -605,8 +627,14 @@ def crawl_nhk_search(keyword, max_articles=3):
             browser.close()
     return articles
 
-def process_article(art, db_config, seen_titles, seen_contents):
+def process_article(art, db_config, seen_titles, seen_contents, deadline=None):
     try:
+        # 예산을 넘겼으면 손대지 않고 돌려보낸다. 큐에 남은 future 는
+        # run_pipeline 이 cancel() 하지만, 이미 워커가 집어간 건은 취소가
+        # 안 되므로 여기서 한 번 더 본다.
+        if deadline is not None and time.time() > deadline:
+            return None
+
         # 같은 제목/본문이 여러 URL 로 들어오는 것을 여기서 한 번 걸러낸다.
         # 예전에는 검사만 하고 집합에 넣지 않아 이 두 줄이 아무 일도 하지
         # 않았다. 통신사 전재 기사가 그대로 통과해 분석 비용을 반복해서
@@ -654,8 +682,11 @@ def process_article(art, db_config, seen_titles, seen_contents):
         logger.error(f"Error processing {art.get('title', 'Unknown')}: {e}")
         return None
 
-def collect_all_sources_for_name(name):
+def collect_all_sources_for_name(name, deadline=None):
     """특정 의원에 대한 다국어/다양한 소스 수집"""
+    if deadline is not None and time.time() > deadline:
+        return []
+
     results = []
     try:
         # 검색어 다양화 및 수집 개수 증가 (2 -> 10)
@@ -684,8 +715,13 @@ def run_pipeline(db_config):
     target_names = POLITICIANS
     logger.info(f"이번 회차 타겟 수집 대상: 전체 {len(target_names)}명 병렬 수집 시작")
 
-    # 2. 뉴스 소스 수집 (병렬 - 키워드 검색 + 섹션 스캔)
-    news_pool = []
+    # 이 회차에 쓸 수 있는 시간. 러너가 잘라내기 전에 우리가 먼저 멈춘다.
+    budget_started = time.time()
+    deadline = budget_started + NEWS_TIME_BUDGET_SEC
+    collect_deadline = min(deadline, budget_started + NEWS_COLLECT_BUDGET_SEC)
+    logger.info(f"[시간 예산] 수집 {NEWS_COLLECT_BUDGET_SEC // 60}분 / "
+                f"전체 {NEWS_TIME_BUDGET_SEC // 60}분")
+
     # 2. 뉴스 소스 수집 (병렬 - 키워드 검색 + 섹션 스캔)
     news_pool = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as collection_executor:
@@ -699,7 +735,7 @@ def run_pipeline(db_config):
         # B. 개별 의원 키워드 검색
         logger.info("[개별 의원 키워드 검색 작업 등록 중...]")
         for name in target_names:
-             futures[collection_executor.submit(collect_all_sources_for_name, name)] = f"Keyword: {name}"
+             futures[collection_executor.submit(collect_all_sources_for_name, name, collect_deadline)] = f"Keyword: {name}"
 
         total_tasks = len(futures)
         completed_tasks = 0
@@ -715,6 +751,10 @@ def run_pipeline(db_config):
             except Exception as e:
                 logger.error(f"Collection error ({task_info}): {e}")
 
+    if time.time() > collect_deadline:
+        logger.warning(f"[수집 예산 초과] {time.time() - budget_started:.0f}초 사용. "
+                       "일부 의원의 검색을 건너뛰었습니다.")
+
     # 3. 중복 제거
     unique_news = []
     seen_urls = set()
@@ -728,10 +768,13 @@ def run_pipeline(db_config):
     # 의원별 검색이 고쳐지기 전에는 기사가 하루 30건 안팎이라 상한이 필요
     # 없었다. 이제 296명 검색이 실제로 결과를 물어 오므로 수백 건이 된다.
     # 기사 한 건은 본문 내려받기 + 등장 의원 쌍마다 NLI 4회라, 그냥 두면
-    # GitHub Actions 90분 한도를 넘겨 수집분이 통째로 버려진다.
+    # 한 회차가 끝없이 길어진다.
     #
-    # 실측 기준선: 기사 37건 분석에 6분(스레드 8개). 상한 300이면 약 50분.
-    # 로그에 분석 소요 시간을 남기므로, 여유가 보이면 이 값을 올리면 된다.
+    # 이 상한만으로는 시간을 못 막는다. 기사 한 건의 비용이 본문 길이와
+    # 등장 의원 수에 따라 크게 달라지기 때문이다. 예전 주석에는 "37건에
+    # 6분이니 300건이면 약 50분" 이라고 적혀 있었는데, 실제 2026-09-09
+    # 회차는 300건 중 140건을 처리하는 데 76분을 썼다(스레드 8개). 시간은
+    # NEWS_TIME_BUDGET_SEC 가 재고, 이 값은 한 회차가 손댈 기사 수만 정한다.
     collected = len(unique_news)
     if len(unique_news) > NEWS_MAX_ARTICLES:
         unique_news = unique_news[:NEWS_MAX_ARTICLES]
@@ -739,16 +782,27 @@ def run_pipeline(db_config):
                 f"(수집 {collected}개, 상한 {NEWS_MAX_ARTICLES})")
 
     # 5. 분석 및 저장 (병렬)
+    #
+    # 예산을 넘기면 남은 기사를 버리고 빠져나온다. 끝까지 도는 것보다
+    # 6·7 단계(엣지 집계, 화제성)에 도달하는 것이 중요하다. 여기서 잘리면
+    # 그날 저장한 기사가 화면에 한 건도 안 나가기 때문이다.
     processed_count = 0
     total_saved = 0
     seen_titles = set()
     seen_contents = set()
     touched_pairs = []
     analysis_started = time.time()
+    out_of_time = False
 
     with ThreadPoolExecutor(max_workers=8) as analysis_executor:
-        future_to_art = {analysis_executor.submit(process_article, art, db_config, seen_titles, seen_contents): art for art in unique_news}
+        future_to_art = {
+            analysis_executor.submit(process_article, art, db_config,
+                                     seen_titles, seen_contents, deadline): art
+            for art in unique_news
+        }
         for future in as_completed(future_to_art):
+            if future.cancelled():
+                continue
             try:
                 result = future.result()
                 processed_count += 1
@@ -757,11 +811,21 @@ def run_pipeline(db_config):
                     touched_pairs.extend(pairs)
                     total_saved += 1
                     logger.info(f"[{total_saved}/{len(unique_news)}] 업데이트/저장 완료: {title[:30]}...")
+            except CancelledError:
+                continue
             except Exception as e:
                 logger.error(f"Error processing article: {e}")
 
+            if not out_of_time and time.time() > deadline:
+                out_of_time = True
+                dropped = sum(1 for f in future_to_art if f.cancel())
+                logger.warning(
+                    f"[시간 예산 초과] {NEWS_TIME_BUDGET_SEC // 60}분을 넘겨 "
+                    f"남은 기사 {dropped}건을 이번 회차에서 뺍니다. "
+                    "집계와 화제성은 그대로 진행합니다.")
+
     logger.info(f"[파이프라인 실행 종료] 총 {total_saved}개 기사 처리됨 "
-                f"(분석 {time.time() - analysis_started:.0f}초)")
+                f"(검토 {processed_count}건, 분석 {time.time() - analysis_started:.0f}초)")
 
     # 6. 관계 집계. 기사 단위 판정을 쌍 단위로 모아 엣지를 다시 쓴다.
     #
@@ -769,6 +833,11 @@ def run_pipeline(db_config):
     # 전재를 한 사건으로 묶고(SimHash), 진영이 다른 매체가 같은 극성을
     # 보도했는지 세고(교차 검증), 오래된 근거의 무게를 줄인다(반감기).
     if touched_pairs:
+        # 분석에 한 시간 넘게 걸리는 회차가 있다. Render 무료 인스턴스는
+        # 15분 무트래픽이면 잠들므로, 시작할 때 깨워 둔 것과 무관하게 지금
+        # 다시 자고 있다. 여기서 안 깨우면 첫 POST 들이 타임아웃으로 버려져
+        # 그날 관계가 조용히 유실된다.
+        wake_api()
         saved, total = push_aggregated_edges(touched_pairs)
         logger.info(f"[관계 집계] 쌍 {len(set(touched_pairs))}개 중 {total}개 승격, {saved}개 저장")
 

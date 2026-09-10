@@ -15,7 +15,18 @@ concurrency:
 jobs:
   crawl:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # 스텝별 한도의 합(110 + 40 + 15)에 준비 시간을 더한 값입니다.
+    #
+    # 90분이던 시절 2026-09-04 부터 09-09 까지 여섯 회차가 전부 이 한도에
+    # 걸려 취소됐습니다. 뉴스 분석 루프 도중에 잘리니 그 뒤의 엣지 집계와
+    # 화제성 산출이 실행되지 않아, 기사를 저장하고도 화면에는 아무것도
+    # 반영되지 않았습니다(API last_updated 가 09-03 에 멈춤).
+    #
+    # 이 값은 안전망일 뿐입니다. 실제 종료 시점은 파이프라인이 스스로
+    # 재는 NEWS_TIME_BUDGET_SEC 가 정합니다. 러너가 프로세스를 죽이면
+    # 마무리 단계가 통째로 날아가지만, 파이프라인이 스스로 멈추면
+    # 그때까지 분석한 만큼은 집계까지 마치고 화면에 나갑니다.
+    timeout-minutes: 170
     env:
       PYTHONPATH: ${{ github.workspace }}/backend
       PYTHONIOENCODING: utf-8
@@ -35,6 +46,10 @@ jobs:
       # 수집할 SNS 플랫폼. X/인스타그램은 비로그인 수집이 막혀 제외했다.
       # 로그인 세션을 붙일 수 있게 되면 "youtube,x,instagram" 으로 바꾼다.
       SNS_PLATFORMS: "youtube"
+      # 뉴스 파이프라인이 수집+분석에 쓸 시간. 이 시간을 넘기면 남은 기사를
+      # 버리고 엣지 집계와 화제성 산출로 넘어간다. 아래 스텝 한도(110분)보다
+      # 반드시 작아야 한다. 그래야 러너가 죽이기 전에 스스로 마무리한다.
+      NEWS_TIME_BUDGET_SEC: "5400"
 
     steps:
       - uses: actions/checkout@v4
@@ -53,11 +68,17 @@ jobs:
 
       # run_news_sns.py 는 while True 데몬이라 스케줄 실행에 맞지 않습니다.
       # 동일한 두 파이프라인을 1회씩 직접 호출합니다.
+      #
+      # 스텝마다 한도를 따로 둔다. 예전에는 job 한도 하나뿐이라 뉴스가
+      # 늦어지면 SNS 와 법안 수집이 시작조차 못 했다. 실제로 09-04 이후
+      # 회차에서 SNS 는 5분만 받고 같이 죽었고 법안은 아예 실행되지 않았다.
       - name: News pipeline
+        timeout-minutes: 110
         run: python backend/crawlers/news_crawler_pipeline.py
 
       - name: SNS pipeline
         if: always() # 뉴스 단계가 실패해도 SNS 는 시도
+        timeout-minutes: 40
         run: python backend/crawlers/sns_crawler_pipeline.py
 
       # 공동발의 그래프. 뉴스는 갈등만 싣고 협력은 싣지 않으므로
@@ -68,6 +89,7 @@ jobs:
       # 키가 없으면 스크립트가 안내만 남기고 끝난다.
       - name: Assembly bills (co-sponsorship)
         if: always()
+        timeout-minutes: 15
         env:
           ASSEMBLY_API_KEY: ${{ secrets.ASSEMBLY_API_KEY }}
         run: python backend/crawlers/assembly_bills_pipeline.py
