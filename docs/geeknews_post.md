@@ -151,8 +151,8 @@ GET <백엔드>/api/relations/camps                       # 언론사 진영표 
 
 ### 문서
 
-- 근거 논문 조사와 알고리즘 설계: [MEDIA_BIAS_RESEARCH.md](https://github.com/showjihyun/KoreaPolitician/blob/master/docs/MEDIA_BIAS_RESEARCH.md)
-- 적용 내역과 실측값: [ALGORITHM_REPORT.md](https://github.com/showjihyun/KoreaPolitician/blob/master/docs/ALGORITHM_REPORT.md)
+- 근거 논문 조사와 알고리즘 설계: [MEDIA_BIAS_RESEARCH.md](https://github.com/showjihyun/KoreaPolitician/blob/main/docs/MEDIA_BIAS_RESEARCH.md)
+- 적용 내역과 실측값: [ALGORITHM_REPORT.md](https://github.com/showjihyun/KoreaPolitician/blob/main/docs/ALGORITHM_REPORT.md)
 
 ---
 
