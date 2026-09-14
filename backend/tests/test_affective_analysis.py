@@ -113,3 +113,74 @@ def test_stances_have_distinct_wording():
     oppose = hypothesis("나경원", "이재명", STANCE_OPPOSE)
     support = hypothesis("나경원", "이재명", STANCE_SUPPORT)
     assert "비판" in oppose and "지지" in support
+
+
+# --- 쌍 하나의 비용 ---------------------------------------------------------
+#
+# analyze_pair 는 상위 TOP_WINDOWS(3)개만 평균한다. 그런데 예전에는 두 이름이
+# 함께 나오는 창을 전부 채점했다. 창 하나에 NLI 4회이므로, 두 사람이 서른 번
+# 함께 언급된 긴 기사는 쌍 하나에 120회를 썼다. 2026-09-13 회차는 이 비용이
+# 기사 한 건에 쌓여 러너 한도(110분)에 걸렸고, 집계와 화제성은 실행되지
+# 못했다.
+
+def _analyzer_without_model(monkeypatch, calls):
+    """모델을 띄우지 않고 extract_stances 만 돌리는 인스턴스."""
+    import crawlers.affective_analysis as aa
+
+    def fake_predict(self, premise, hypothesis_text):
+        calls.append(hypothesis_text)
+        return 0.9        # 임계값(0.65)을 넘겨 태도가 쌓이게 한다
+
+    monkeypatch.setattr(aa.AffectiveAnalyzer, "predict_nli", fake_predict)
+    analyzer = aa.AffectiveAnalyzer.__new__(aa.AffectiveAnalyzer)
+    analyzer.device = "cpu"
+    analyzer._entailment_index = 0
+    return analyzer
+
+
+def _long_article(a, b, sentences=30):
+    """두 사람이 같은 문장에 계속 함께 나오는 긴 기사."""
+    return " ".join(
+        f"{a} 의원은 {i}차 회의에서 {b} 대표의 예산안 처리 방식을 두고 문제를 제기했다."
+        for i in range(1, sentences + 1)
+    )
+
+
+def test_windows_per_pair_are_capped(monkeypatch):
+    import crawlers.affective_analysis as aa
+
+    calls = []
+    analyzer = _analyzer_without_model(monkeypatch, calls)
+    monkeypatch.setattr(aa, "MAX_WINDOWS_PER_PAIR", 8)
+
+    analyzer.extract_stances(_long_article("나경원", "이재명"), "나경원", "이재명")
+
+    # 창 하나에 NLI 4회(두 극성 x 두 방향).
+    assert len(calls) == 8 * 4, f"창 8개면 NLI 32회인데 {len(calls)}회 불렀다"
+
+
+def test_window_cap_is_configurable(monkeypatch):
+    import crawlers.affective_analysis as aa
+
+    calls = []
+    analyzer = _analyzer_without_model(monkeypatch, calls)
+    monkeypatch.setattr(aa, "MAX_WINDOWS_PER_PAIR", 2)
+
+    analyzer.extract_stances(_long_article("나경원", "이재명"), "나경원", "이재명")
+
+    assert len(calls) == 2 * 4
+
+
+def test_capped_pair_still_returns_a_verdict(monkeypatch):
+    """상한을 걸어도 판정은 나온다. 상위 3개만 쓰이므로 결론은 그대로다."""
+    import crawlers.affective_analysis as aa
+
+    calls = []
+    analyzer = _analyzer_without_model(monkeypatch, calls)
+    monkeypatch.setattr(aa, "MAX_WINDOWS_PER_PAIR", 4)
+
+    result = analyzer.analyze_pair(_long_article("나경원", "이재명"), "나경원", "이재명")
+
+    assert result is not None
+    assert result["type"] in (aa.NEGATIVE_SENTIMENT, aa.POSITIVE_SENTIMENT)
+    assert result["n_windows"] <= 4

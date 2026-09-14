@@ -80,6 +80,24 @@ HEDGE_FACTOR = 0.5
 #: 하나가 기사를 대표한다.
 TOP_WINDOWS = 3
 
+#: 쌍 하나에서 점수를 매길 창의 최대 개수.
+#:
+#: analyze_pair 는 결국 상위 TOP_WINDOWS(3)개만 평균한다. 그런데 예전에는
+#: 두 이름이 함께 나오는 창을 전부 채점했다. 창 하나에 NLI 4회이므로, 두
+#: 사람이 서른 번 함께 언급된 긴 기사에서는 쌍 하나에 120회를 썼다. 회차의
+#: 시간 예산은 기사 단위로만 재고 있어서 이 비용이 보이지 않았고,
+#: 2026-09-13 회차는 여기서 무너졌다.
+#:
+#: 한국어 기사는 핵심을 앞에 두므로(역피라미드) 앞쪽 창을 남긴다.
+MAX_WINDOWS_PER_PAIR = int(os.environ.get("RELATION_MAX_WINDOWS_PER_PAIR", "8"))
+
+#: torch 가 호출 하나에 쓸 스레드 수.
+#:
+#: 파이프라인은 기사 8건을 동시에 분석한다. torch 는 기본값으로 호출마다
+#: 코어를 전부 쓰려 하므로, 워커 8개가 각자 코어 4개를 요구하며 서로를
+#: 밀어낸다. 1로 묶어 워커 수만큼만 병렬로 돌게 한다.
+torch.set_num_threads(int(os.environ.get("TORCH_NUM_THREADS", "1")))
+
 #: 창 크기(앞뒤 문장 수). 한국어 기사는 첫 언급 뒤 "나 의원", "이 대표"
 #: 로 줄여 쓰기 때문에 두 이름이 한 창에 함께 나오는 경우가 많지 않다.
 #: 창을 넓히면 회수가 늘지만 무관한 문장이 전제에 섞인다.
@@ -247,6 +265,7 @@ class AffectiveAnalyzer:
 
         names = list(candidates) if candidates else [entity_a, entity_b]
         stances: List[Dict] = []
+        scored_windows = 0
 
         for idx, sentence in enumerate(sentences):
             if entity_a not in sentence and entity_b not in sentence:
@@ -277,6 +296,14 @@ class AffectiveAnalyzer:
             evidence_type = classify_evidence(sentence)
             if DROP_NARRATION and evidence_type == EVIDENCE_NARRATION:
                 continue
+
+            # 채점할 창이 상한에 닿으면 여기서 끝낸다. 뒤쪽 창을 더 봐도
+            # 상위 TOP_WINDOWS 개만 쓰이므로 판정은 거의 그대로이고, 긴
+            # 기사에서 쌍 하나의 비용만 끝없이 늘어난다.
+            if scored_windows >= MAX_WINDOWS_PER_PAIR:
+                break
+            scored_windows += 1
+
             hedged = is_hedged(window)
             weight = EVIDENCE_WEIGHT[evidence_type] * (HEDGE_FACTOR if hedged else 1.0)
 

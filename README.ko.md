@@ -26,7 +26,7 @@ Zero-Shot NLI 모델에게 누가 누구를 비판했고 지지했는지 물어,
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![매일 수집](https://img.shields.io/badge/news-refreshed%20daily-34d399)
-![테스트](https://img.shields.io/badge/tests-133-22d3ee)
+![테스트](https://img.shields.io/badge/tests-141-22d3ee)
 
 ---
 
@@ -177,6 +177,18 @@ flowchart TB
   못했습니다. 데이터베이스는 계속 커지는데 `last_updated` 는 엿새 동안 같은 날짜에 멈춰
   있었습니다. 지금은 파이프라인이 스스로 시계를 보고, 예산이 끝나면 남은 기사를 버리고,
   마무리 단계에는 반드시 도달합니다.
+- **항목 사이에서만 보는 예산은 예산이 아닙니다.** 위의 시계가 루프 도중에 죽던 회차를
+  살렸는데, 2026-09-13 회차가 또 죽었습니다. 뉴스 스텝이 110분 한도에 걸렸고 집계는
+  실행되지 못했습니다. 예산을 보는 자리가 딱 두 곳이었습니다. 워커가 기사를 집어들 때,
+  그리고 끝난 기사 사이. 비싼 작업이 기사 **안쪽** 에 있으면 둘 다 아무 일도 하지
+  못합니다. `Future.cancel()` 은 아직 시작하지 않은 것만 취소하므로, 300건이 이미 전부
+  워커에 들어간 상태에서는 하나도 취소하지 못한 채 "남은 기사 **0건**" 이라고 적었습니다.
+  그 사이 칼럼 기사 한 건이 — 정치인 열 몇 명이 반복해 등장하고, 함께 나오는 창마다
+  NLI 를 4회 부르는 — 로그 한 줄 없이 워커를 열 분 붙잡고 있었고, `as_completed` 와
+  `with` 블록은 그것을 충실히 기다렸습니다. 지금은 예산을 **쌍 사이** 에서 보고, 쌍
+  하나에 채점할 창을 8개로 묶고(어차피 상위 3개만 평균합니다 — 실측으로 그런 쌍 하나가
+  NLI 120회에서 32회로), 남은 워커는 정해진 유예만큼만 기다린 뒤 두고 가며 그때까지의
+  결과를 공개합니다.
 - **`vercel.json` 에는 주석을 넣을 수 없고, 그 실패는 눈에 띄지 않습니다.** JSON 에 주석이
   없으니 `"//"` 키를 쓰는 관습이 있는데, Vercel 은 이를 스키마 검증에서 거부합니다.
   *빌드가 시작되기 전에* 말입니다. 그래서 rewrite 수정과 CSP 헤더를 담은 커밋이 한 번도
@@ -225,7 +237,7 @@ python backend/crawlers/sns_crawler_pipeline.py    # 유튜브 화제성
 pip install -r backend/requirements-api.txt \
             -r backend/requirements-crawler.txt \
             -r backend/requirements-dev.txt
-pytest                        # 133개
+pytest                        # 141개
 ```
 
 저장소 루트의 `pytest.ini` 가 경로와 `PYTHONPATH` 를 잡아 주므로 `pytest` 만 쳐도 돕니다.
@@ -248,9 +260,12 @@ pytest                        # 133개
 | `RELATION_NLI_THRESHOLD` | 0.65 | 함의 확률 하한 |
 | `RELATION_DIRECTION_MARGIN` | 0.10 | 방향을 인정할 점수 차 |
 | `RELATION_WINDOW_RADIUS` | 1 | 언급 앞뒤로 함께 읽을 문장 수 |
+| `RELATION_MAX_WINDOWS_PER_PAIR` | 8 | 쌍 하나에서 점수를 매길 창의 최대 개수 |
+| `RELATION_MAX_NAMES_PER_ARTICLE` | 12 | 기사 한 건에서 쌍을 만들 이름의 최대 개수 |
 | `RELATION_DROP_NARRATION` | 꺼짐 | 켜면 기자 서술을 엣지에서 아예 뺍니다 |
 | `NEWS_TIME_BUDGET_SEC` | 5400 | 파이프라인이 마무리 전까지 자신에게 주는 시간 |
 | `NEWS_COLLECT_BUDGET_SEC` | 1800 | 그중 수집 단계가 쓸 수 있는 몫 |
+| `NEWS_FINISH_GRACE_SEC` | 60 | 기사를 붙잡고 있는 워커를 기다려 주는 시간 |
 | `NEWS_MAX_ARTICLES` | 300 | 한 회차가 분석할 기사 수 |
 
 운영 스크립트:

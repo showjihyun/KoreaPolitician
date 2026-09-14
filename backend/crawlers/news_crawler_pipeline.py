@@ -14,6 +14,7 @@ from core import relation_evidence
 from core.db_config import (api_base_url, close_sync_pool,
                             db_config_from_env, env, get_sync_pool)
 import logging
+import threading
 import traceback
 import json
 from crawlers.affective_analysis import AffectiveAnalyzer
@@ -169,6 +170,28 @@ NEWS_TIME_BUDGET_SEC = int(env("NEWS_TIME_BUDGET_SEC", "5400"))
 #: 실측 약 11분. 네이버 검색이 응답하지 않으면 296명 x 2회 x 30초 타임아웃이
 #: 예산을 통째로 먹으므로 따로 막아 둔다.
 NEWS_COLLECT_BUDGET_SEC = int(env("NEWS_COLLECT_BUDGET_SEC", "1800"))
+
+#: 예산을 넘긴 뒤 돌고 있는 워커를 기다려 주는 시간(초).
+#:
+#: 워커는 쌍 사이에서 예산을 보므로 대개 몇 초 안에 돌아온다. 그 결과까지는
+#: 집계에 넣는 게 이득이다. 다만 무한정 기다리면 안 된다. 2026-09-13 회차가
+#: 정확히 그래서 죽었다. 아래 out_of_time 처리 주석을 함께 보라.
+NEWS_FINISH_GRACE_SEC = int(env("NEWS_FINISH_GRACE_SEC", "60"))
+
+#: 기사 한 건에서 관계 쌍을 만들 이름의 최대 개수.
+#:
+#: 쌍의 수는 이름 수의 제곱으로 는다(n=8 은 28쌍, n=20 은 190쌍). 쌍마다
+#: 창을 훑고 창마다 NLI 를 4회 부르므로, 의원을 줄줄이 나열한 기사 한 건이
+#: 회차의 남은 시간을 통째로 먹을 수 있다. 2026-09-13 회차에서 기사 한 건이
+#: 10분 넘게 한 워커를 붙잡고 있었고, 그 사이 로그는 한 줄도 나오지 않았다.
+#:
+#: 나열 기사는 관계의 근거로도 약하다. 언급 하나의 무게를 1/√n 로 깎는 것과
+#: 같은 이유다(core/hotness.py 의 focus_weight). 많이 언급된 이름부터 남긴다.
+RELATION_MAX_NAMES_PER_ARTICLE = int(env("RELATION_MAX_NAMES_PER_ARTICLE", "12"))
+
+#: 기사 한 건이 이 시간을 넘기면 이름 수와 쌍 수를 남긴다.
+#: 조용히 오래 걸리는 기사를 다음에 찾아낼 수 있게 하기 위한 로그다.
+NEWS_SLOW_ARTICLE_SEC = int(env("NEWS_SLOW_ARTICLE_SEC", "30"))
 
 # CPU 코어의 80%를 사용하여 병렬 처리 수 결정
 MAX_WORKERS = max(1, int((os.cpu_count() or 4) * 0.8))
@@ -627,6 +650,29 @@ def crawl_nhk_search(keyword, max_articles=3):
             browser.close()
     return articles
 
+def pair_candidates(found_names, content, limit=None):
+    """쌍을 만들 이름을 추린다. 많이 언급된 이름부터 남긴다.
+
+    이름이 n개면 쌍은 n(n-1)/2 개다. 의원 20명을 나열한 기사는 190쌍이
+    되고, 쌍마다 창을 훑으며 NLI 를 부르니 기사 한 건이 회차의 남은 시간을
+    다 먹는다. 이런 기사는 대개 "이번 주 법안" 같은 나열 기사이고, 관계의
+    근거로도 약하다.
+
+    등장 횟수 순으로 자르고, 남은 이름은 기사에 나온 순서를 지킨다. 순서가
+    바뀌면 entity_a/entity_b 가 달라져 방향 판정이 흔들린다.
+    """
+    cap = RELATION_MAX_NAMES_PER_ARTICLE if limit is None else limit
+    if cap <= 0 or len(found_names) <= cap:
+        return list(found_names)
+
+    ranked = sorted(found_names, key=lambda n: content.count(n), reverse=True)
+    kept = set(ranked[:cap])
+    dropped = [n for n in found_names if n not in kept]
+    logger.info(f"[나열 기사] 이름 {len(found_names)}개 중 {cap}개만 쌍으로 본다. "
+                f"제외: {', '.join(dropped[:8])}{' ...' if len(dropped) > 8 else ''}")
+    return [n for n in found_names if n in kept]
+
+
 def process_article(art, db_config, seen_titles, seen_contents, deadline=None):
     try:
         # 예산을 넘겼으면 손대지 않고 돌려보낸다. 큐에 남은 future 는
@@ -655,20 +701,46 @@ def process_article(art, db_config, seen_titles, seen_contents, deadline=None):
 
         if len(found_names) >= 2:
             relationships = []
-            for i in range(len(found_names)):
-                for j in range(i+1, len(found_names)):
-                    p1, p2 = found_names[i], found_names[j]
+            pair_names = pair_candidates(found_names, content)
+            pairs_seen = 0
+            analysis_began = time.time()
+            for i in range(len(pair_names)):
+                for j in range(i+1, len(pair_names)):
+                    # 예산은 쌍 사이에서 본다.
+                    #
+                    # 예전에는 기사를 집어들 때 한 번만 봤다. 그래서 한 번
+                    # 시작한 기사는 몇 분이 걸리든 끝까지 돌았고, 그걸
+                    # 기다리는 동안 회차가 러너 한도에 걸려 죽었다. 여기서
+                    # 빠져나오면 이미 판정한 쌍은 그대로 저장된다.
+                    if deadline is not None and time.time() > deadline:
+                        logger.warning(
+                            f"[시간 예산 초과] 분석을 중간에 끊는다: "
+                            f"{art['title'][:25]}... (쌍 {pairs_seen}개까지)")
+                        break
+                    p1, p2 = pair_names[i], pair_names[j]
+                    pairs_seen += 1
                     try:
                         # found_names 를 함께 넘긴다. 창 안에서 이름을 다시
                         # 확인할 때 더 긴 이름(김윤덕)을 알아야 짧은 이름
-                        # (김윤)의 오탐을 막을 수 있다.
+                        # (김윤)의 오탐을 막을 수 있다. 쌍은 추려도 이름
+                        # 확인은 기사에 나온 전체를 써야 한다.
                         result = analyzer.analyze_pair(content, p1, p2, found_names)
                         if result:
                             relationships.append({
                                 "entity_a": p1, "entity_b": p2, **result,
                             })
                     except: continue
+                else:
+                    continue
+                break
             art['relationships'] = relationships
+
+            elapsed = time.time() - analysis_began
+            if elapsed > NEWS_SLOW_ARTICLE_SEC:
+                logger.info(
+                    f"[느린 기사] {elapsed:.0f}초 - 이름 {len(found_names)}개"
+                    f"(쌍 대상 {len(pair_names)}개, 판정 {pairs_seen}쌍) "
+                    f"{art['title'][:25]}...")
 
         art['content'] = content
         art['politicians'] = found_names
@@ -794,13 +866,21 @@ def run_pipeline(db_config):
     analysis_started = time.time()
     out_of_time = False
 
-    with ThreadPoolExecutor(max_workers=8) as analysis_executor:
-        future_to_art = {
-            analysis_executor.submit(process_article, art, db_config,
-                                     seen_titles, seen_contents, deadline): art
-            for art in unique_news
-        }
-        for future in as_completed(future_to_art):
+    # with 문을 쓰지 않는다. 블록을 빠져나갈 때 shutdown(wait=True) 이
+    # 걸려, 돌고 있는 워커가 끝날 때까지 여기서 붙잡힌다. 2026-09-13 회차는
+    # 그 상태로 열 분을 서 있다가 러너에게 죽었다. 예산을 넘기면 기다리지
+    # 않고 집계로 넘어가야 한다.
+    analysis_executor = ThreadPoolExecutor(max_workers=8)
+    future_to_art = {
+        analysis_executor.submit(process_article, art, db_config,
+                                 seen_titles, seen_contents, deadline): art
+        for art in unique_news
+    }
+    try:
+        # 전체 대기 시간을 예산 + 유예로 묶는다. 예산을 넘긴 뒤에도 유예
+        # 동안 돌아오는 결과는 집계에 넣고, 그 뒤로는 두고 간다.
+        wait_left = max(1.0, deadline + NEWS_FINISH_GRACE_SEC - time.time())
+        for future in as_completed(future_to_art, timeout=wait_left):
             if future.cancelled():
                 continue
             try:
@@ -818,11 +898,26 @@ def run_pipeline(db_config):
 
             if not out_of_time and time.time() > deadline:
                 out_of_time = True
-                dropped = sum(1 for f in future_to_art if f.cancel())
+                # cancel() 은 아직 시작하지 않은 것만 취소한다. 이미 워커가
+                # 집어간 건은 스스로 빠져나오게 두고(process_article 이 쌍
+                # 사이에서 예산을 본다), 몇 건이 그런 상태인지 남긴다.
+                # 예전에는 취소된 개수만 찍어서, 300건이 다 시작된 회차에서
+                # "남은 기사 0건" 이라고만 적고 그대로 멈춰 있었다.
+                queued = sum(1 for f in future_to_art if f.cancel())
+                running = sum(1 for f in future_to_art if f.running())
                 logger.warning(
-                    f"[시간 예산 초과] {NEWS_TIME_BUDGET_SEC // 60}분을 넘겨 "
-                    f"남은 기사 {dropped}건을 이번 회차에서 뺍니다. "
-                    "집계와 화제성은 그대로 진행합니다.")
+                    f"[시간 예산 초과] {NEWS_TIME_BUDGET_SEC // 60}분을 넘겼다. "
+                    f"대기 {queued}건은 다음 회차로 넘기고, 돌고 있는 {running}건은 "
+                    f"최대 {NEWS_FINISH_GRACE_SEC}초만 기다린다. "
+                    "집계와 화제성은 그대로 진행한다.")
+    except TimeoutError:
+        # concurrent.futures.TimeoutError 는 3.11 부터 내장 TimeoutError 다.
+        running = sum(1 for f in future_to_art if f.running())
+        logger.warning(f"[마무리] 아직 돌고 있는 {running}건을 두고 집계로 넘어간다.")
+    finally:
+        # wait=False 로 지금 바로 돌려받는다. 파이썬이 인터프리터 종료 때
+        # 워커를 한 번 더 join 하지만, 그때는 집계와 화제성이 이미 끝나 있다.
+        analysis_executor.shutdown(wait=False, cancel_futures=True)
 
     logger.info(f"[파이프라인 실행 종료] 총 {total_saved}개 기사 처리됨 "
                 f"(검토 {processed_count}건, 분석 {time.time() - analysis_started:.0f}초)")
@@ -875,5 +970,15 @@ if __name__ == "__main__":
         exit_code = 1
     finally:
         close_sync_pool()
+        logging.shutdown()
+
+    # 분석 워커가 아직 돌고 있으면 파이썬은 종료할 때 그 스레드를 join 한다.
+    #
+    # 여기까지 왔다면 집계와 화제성은 이미 끝났다. 남은 워커를 기다려서
+    # 얻을 것은 없고, 러너 한도에 걸려 회차가 실패로 남을 위험만 있다.
+    # 저장은 워커 안에서 커밋되고 엣지는 API 로 올라갔으며 로그도 방금
+    # 내려썼으므로, 남은 스레드가 있으면 여기서 끊는다.
+    if threading.active_count() > 1:
+        os._exit(exit_code)
 
     sys.exit(exit_code)

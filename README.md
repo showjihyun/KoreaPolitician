@@ -25,7 +25,7 @@ higher than the canvas draws.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Daily news pipeline](https://img.shields.io/badge/news-refreshed%20daily-34d399)
-![Tests](https://img.shields.io/badge/tests-133-22d3ee)
+![Tests](https://img.shields.io/badge/tests-141-22d3ee)
 
 ---
 
@@ -185,6 +185,19 @@ Member profiles and portraits come from the National Assembly's public member da
   articles and published nothing. `last_updated` sat at the same date for six days while
   the database kept growing. The pipeline now watches its own clock, drops the remaining
   articles when the budget runs out, and always reaches the finishing steps.
+- **A budget you only check between items is not a budget.** The clock above saved the
+  runs that died mid-loop, and then 2026-09-13 died anyway: the news step was killed at
+  its 110-minute limit, and aggregation never ran. The deadline was checked in exactly two
+  places — before a worker picked up an article, and between finished articles — and both
+  are useless once the expensive work sits *inside* one article. `Future.cancel()` cancels
+  only what hasn't started, so with all 300 articles already picked up it cancelled nothing
+  and logged "dropping the remaining **0** articles"; meanwhile a single opinion column —
+  a dozen politicians named over and over, every co-occurrence window scored with four NLI
+  calls — held a worker for ten minutes without printing a line, and both `as_completed`
+  and the `with` block dutifully waited for it. The deadline is now checked between
+  *pairs*, the windows scored per pair are capped at 8 (only the top 3 are averaged
+  anyway — measured: 120 NLI calls to 32 for one such pair), and stragglers get a fixed
+  grace period before the run leaves them behind and publishes what it has.
 - **`vercel.json` cannot hold comments, and the failure is invisible.** JSON has no
   comments, so `"//"` keys are a common convention — but Vercel rejects them in schema
   validation, *before the build starts*. A commit adding a rewrite fix and a CSP header
@@ -235,7 +248,7 @@ The relationship model (~550 MB) downloads once on first run. On Windows PowerSh
 pip install -r backend/requirements-api.txt \
             -r backend/requirements-crawler.txt \
             -r backend/requirements-dev.txt
-pytest                        # 133 tests
+pytest                        # 141 tests
 ```
 
 `pytest.ini` at the repo root sets the paths and `PYTHONPATH`, so bare `pytest` works. The
@@ -260,9 +273,12 @@ constant it controls:
 | `RELATION_NLI_THRESHOLD` | 0.65 | Entailment probability floor |
 | `RELATION_DIRECTION_MARGIN` | 0.10 | Score gap required to accept a direction |
 | `RELATION_WINDOW_RADIUS` | 1 | Sentences of context on each side of a mention |
+| `RELATION_MAX_WINDOWS_PER_PAIR` | 8 | Windows scored per pair before the rest are left alone |
+| `RELATION_MAX_NAMES_PER_ARTICLE` | 12 | Names one article may pair up |
 | `RELATION_DROP_NARRATION` | off | Drop reporter narration from edges entirely |
 | `NEWS_TIME_BUDGET_SEC` | 5400 | Time the pipeline gives itself before finishing up |
 | `NEWS_COLLECT_BUDGET_SEC` | 1800 | Of that, the share collection may spend |
+| `NEWS_FINISH_GRACE_SEC` | 60 | How long a run waits on workers still mid-article |
 | `NEWS_MAX_ARTICLES` | 300 | Articles one run will analyse |
 
 Operational scripts:
