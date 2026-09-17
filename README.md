@@ -77,7 +77,7 @@ flowchart TB
 
     subgraph P["Daily pipeline — GitHub Actions, 04:00 KST"]
         E["1 · collect<br/>1 runner · Playwright, 30-min budget"]
-        F["2 · extract<br/>4 runners in parallel · directional zero-shot NLI"]
+        F["2 · extract<br/>6 runners in parallel · directional zero-shot NLI"]
         M(["mDeBERTa-v3-base<br/>mnli-xnli"])
         G["3 · record<br/>one row per article verdict"]
         H["4 · aggregate<br/>SimHash events · cross-camp<br/>· 45-day half-life"]
@@ -108,9 +108,9 @@ flowchart TB
 **Workflow:** [`.github/workflows/crawl.yml`](.github/workflows/crawl.yml) ·
 [run history](https://github.com/showjihyun/KoreaPolitician/actions/workflows/crawl.yml)
 
-The nightly run is six jobs. One collects the article list; four analyse it in parallel,
-each taking every fourth article on its own 60-minute budget; one aggregates the evidence
-and publishes. YouTube attention and bill co-sponsorship run alongside as independent
+The nightly news run is eight jobs. One collects the article list; six analyse it in
+parallel, each taking every sixth article on its own 60-minute budget; one aggregates the
+evidence and publishes. YouTube attention and bill co-sponsorship run alongside as independent
 jobs. The runners pass nothing but JSON between them — the article list, and each
 analyser's list of the pairs it touched — and if an analyser dies, the finishing job still
 runs and recovers the evidence that runner had already saved, from the database, by
@@ -214,7 +214,7 @@ Member profiles and portraits come from the National Assembly's public member da
   threads oversubscribing the cores and a slow Python tokenizer, were each measured and
   ruled out, and the hardware line now logged by the workflow showed both slow nights
   ran on EPYC machines with AVX-512. Nothing was broken; the work had outgrown one runner,
-  so it now runs on four.
+  so it now runs on six.
 - **`vercel.json` cannot hold comments, and the failure is invisible.** JSON has no
   comments, so `"//"` keys are a common convention — but Vercel rejects them in schema
   validation, *before the build starts*. A commit adding a rewrite fix and a CSP header
@@ -264,8 +264,8 @@ stages split across runners, and so can you:
 ```bash
 python backend/crawlers/news_crawler_pipeline.py collect --out articles.json
 python backend/crawlers/news_crawler_pipeline.py analyze --articles articles.json \
-       --shard 0 --shards 4 --out pairs/pairs-0.json        # one per shard
-python backend/crawlers/news_crawler_pipeline.py finish --pairs-dir pairs --shards 4
+       --shard 0 --shards 6 --out pairs/pairs-0.json        # one per shard
+python backend/crawlers/news_crawler_pipeline.py finish --pairs-dir pairs --shards 6
 ```
 
 The relationship model (~550 MB) downloads once on first run. On Windows PowerShell use
@@ -404,8 +404,8 @@ Free tier throughout:
   6543, not a direct connection: free-tier connection limits are low and the crawler
   borrows per request.
 - **Pipeline** — GitHub Actions, daily at 04:00 KST. Public repo, so runner minutes are
-  free; the news stage fans out to four 4-vCPU runners for NLI, and the model is cached
-  between runs so four runners don't each fetch 550 MB from Hugging Face.
+  free; the news stage fans out to six 4-vCPU runners for NLI, and the model is cached
+  between runs so the runners don't each fetch 550 MB from Hugging Face.
 - **Frontend** — Vercel.
 
 Setup guide: [docs/BACKEND_DEPLOY.md](docs/BACKEND_DEPLOY.md) *(in Korean)*.

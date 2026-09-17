@@ -77,7 +77,7 @@ flowchart TB
 
     subgraph P["매일 도는 파이프라인 — GitHub Actions, 04:00 KST"]
         E["1 · 수집<br/>러너 1대 · Playwright, 30분 예산"]
-        F["2 · 추출<br/>러너 4대 병렬 · 방향형 Zero-Shot NLI"]
+        F["2 · 추출<br/>러너 6대 병렬 · 방향형 Zero-Shot NLI"]
         M(["mDeBERTa-v3-base<br/>mnli-xnli"])
         G["3 · 적재<br/>기사 판정 하나당 한 행"]
         H["4 · 집계<br/>SimHash 사건 묶기 · 진영 교차검증<br/>· 반감기 45일"]
@@ -107,9 +107,9 @@ flowchart TB
 **워크플로우:** [`.github/workflows/crawl.yml`](.github/workflows/crawl.yml) ·
 [실행 이력](https://github.com/showjihyun/KoreaPolitician/actions/workflows/crawl.yml)
 
-매일 밤 실행은 잡 여섯 개입니다. 하나가 기사 목록을 모으고, 넷이 그 목록을 나눠
-병렬로 분석하며(러너마다 네 건에 한 건씩, 각자 60분 예산), 하나가 근거를 집계해
-공개합니다. 유튜브 화제성과 공동발의 수집은 옆에서 독립된 잡으로 돕니다. 러너
+매일 밤 뉴스 실행은 잡 여덟 개입니다. 하나가 기사 목록을 모으고, 여섯이 그 목록을
+나눠 병렬로 분석하며(러너마다 여섯 건에 한 건씩, 각자 60분 예산), 하나가 근거를
+집계해 공개합니다. 유튜브 화제성과 공동발의 수집은 옆에서 독립된 잡으로 돕니다. 러너
 사이에는 JSON 만 오갑니다 — 기사 목록, 그리고 분석 러너마다 건드린 쌍 목록. 분석
 러너 하나가 죽어도 마무리 잡은 돌고, 그 러너가 죽기 전까지 저장한 근거는 DB 에서
 시각으로 찾아 함께 집계합니다.
@@ -203,7 +203,7 @@ flowchart TB
   값입니다. 다른 두 용의자 — 스레드가 코어를 넘치게 쓰는 것, 느린 파이썬 토크나이저 —
   도 각각 재서 뺐고, 워크플로에 새로 남긴 하드웨어 줄은 느렸던 두 밤이 모두 AVX-512 를
   갖춘 EPYC 기계였다는 걸 보여 줬습니다. 고장 난 것은 없었습니다. 일이 러너 한 대의
-  몫을 넘었고, 그래서 이제 네 대에서 돕니다.
+  몫을 넘었고, 그래서 이제 여섯 대에서 돕니다.
 - **`vercel.json` 에는 주석을 넣을 수 없고, 그 실패는 눈에 띄지 않습니다.** JSON 에 주석이
   없으니 `"//"` 키를 쓰는 관습이 있는데, Vercel 은 이를 스키마 검증에서 거부합니다.
   *빌드가 시작되기 전에* 말입니다. 그래서 rewrite 수정과 CSP 헤더를 담은 커밋이 한 번도
@@ -251,8 +251,8 @@ python backend/crawlers/sns_crawler_pipeline.py    # 유튜브 화제성
 ```bash
 python backend/crawlers/news_crawler_pipeline.py collect --out articles.json
 python backend/crawlers/news_crawler_pipeline.py analyze --articles articles.json \
-       --shard 0 --shards 4 --out pairs/pairs-0.json        # 샤드마다 하나씩
-python backend/crawlers/news_crawler_pipeline.py finish --pairs-dir pairs --shards 4
+       --shard 0 --shards 6 --out pairs/pairs-0.json        # 샤드마다 하나씩
+python backend/crawlers/news_crawler_pipeline.py finish --pairs-dir pairs --shards 6
 ```
 
 관계 추출 모델(약 550MB)을 처음 한 번 내려받습니다. Windows PowerShell 에서는
@@ -387,8 +387,8 @@ curl "https://korea-politician-api.onrender.com/api/graph/all"
   포트)를 경유합니다. 무료 티어의 커넥션 한도가 낮고 크롤러는 요청마다 풀에서 빌려 쓰기
   때문입니다.
 - **파이프라인** — GitHub Actions, 매일 04:00 KST. 공개 저장소라 러너 사용량이 무료입니다.
-  뉴스 분석은 vCPU 4개짜리 러너 네 대로 나눠 돌고, 모델은 회차 사이에 캐시해 러너
-  네 대가 허깅페이스에서 550MB 를 각자 받지 않게 합니다.
+  뉴스 분석은 vCPU 4개짜리 러너 여섯 대로 나눠 돌고, 모델은 회차 사이에 캐시해
+  러너마다 허깅페이스에서 550MB 를 각자 받지 않게 합니다.
 - **프론트엔드** — Vercel.
 
 구성 가이드: [docs/BACKEND_DEPLOY.md](docs/BACKEND_DEPLOY.md).
