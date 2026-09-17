@@ -25,7 +25,7 @@ higher than the canvas draws.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Daily news pipeline](https://img.shields.io/badge/news-refreshed%20daily-34d399)
-![Tests](https://img.shields.io/badge/tests-141-22d3ee)
+![Tests](https://img.shields.io/badge/tests-154-22d3ee)
 
 ---
 
@@ -76,8 +76,8 @@ flowchart TB
     end
 
     subgraph P["Daily pipeline — GitHub Actions, 04:00 KST"]
-        E["1 · collect<br/>Playwright, 30-min budget"]
-        F["2 · extract<br/>directional zero-shot NLI"]
+        E["1 · collect<br/>1 runner · Playwright, 30-min budget"]
+        F["2 · extract<br/>4 runners in parallel · directional zero-shot NLI"]
         M(["mDeBERTa-v3-base<br/>mnli-xnli"])
         G["3 · record<br/>one row per article verdict"]
         H["4 · aggregate<br/>SimHash events · cross-camp<br/>· 45-day half-life"]
@@ -107,6 +107,14 @@ flowchart TB
 [The bias literature behind them](docs/MEDIA_BIAS_RESEARCH.md) — *all three in Korean.*
 **Workflow:** [`.github/workflows/crawl.yml`](.github/workflows/crawl.yml) ·
 [run history](https://github.com/showjihyun/KoreaPolitician/actions/workflows/crawl.yml)
+
+The nightly run is six jobs. One collects the article list; four analyse it in parallel,
+each taking every fourth article on its own 60-minute budget; one aggregates the evidence
+and publishes. YouTube attention and bill co-sponsorship run alongside as independent
+jobs. The runners pass nothing but JSON between them — the article list, and each
+analyser's list of the pairs it touched — and if an analyser dies, the finishing job still
+runs and recovers the evidence that runner had already saved, from the database, by
+timestamp.
 
 The short version:
 
@@ -198,6 +206,15 @@ Member profiles and portraits come from the National Assembly's public member da
   *pairs*, the windows scored per pair are capped at 8 (only the top 3 are averaged
   anyway — measured: 120 NLI calls to 32 for one such pair), and stragglers get a fixed
   grace period before the run leaves them behind and publishes what it has.
+- **Benchmark at the length you actually run.** Chasing the slow nights, a quick local
+  measurement put one NLI call at 17 ms, and that number made the slowdown look like a
+  broken runner. It was taken on a 40-token sentence. The windows the pipeline really
+  scores are about 230 tokens, and there one call is **608 ms** on a single core — 35 times
+  more, and exactly enough to explain 30–80 seconds per pair. Two other suspects,
+  threads oversubscribing the cores and a slow Python tokenizer, were each measured and
+  ruled out, and the hardware line now logged by the workflow showed both slow nights
+  ran on EPYC machines with AVX-512. Nothing was broken; the work had outgrown one runner,
+  so it now runs on four.
 - **`vercel.json` cannot hold comments, and the failure is invisible.** JSON has no
   comments, so `"//"` keys are a common convention — but Vercel rejects them in schema
   validation, *before the build starts*. A commit adding a rewrite fix and a CSP header
@@ -241,6 +258,16 @@ python backend/crawlers/news_crawler_pipeline.py   # news + relationship aggrega
 python backend/crawlers/sns_crawler_pipeline.py    # YouTube attention
 ```
 
+Without arguments the news pipeline runs every stage in one process. Actions runs the same
+stages split across runners, and so can you:
+
+```bash
+python backend/crawlers/news_crawler_pipeline.py collect --out articles.json
+python backend/crawlers/news_crawler_pipeline.py analyze --articles articles.json \
+       --shard 0 --shards 4 --out pairs/pairs-0.json        # one per shard
+python backend/crawlers/news_crawler_pipeline.py finish --pairs-dir pairs --shards 4
+```
+
 The relationship model (~550 MB) downloads once on first run. On Windows PowerShell use
 `$env:PYTHONPATH="backend"`.
 
@@ -248,7 +275,7 @@ The relationship model (~550 MB) downloads once on first run. On Windows PowerSh
 pip install -r backend/requirements-api.txt \
             -r backend/requirements-crawler.txt \
             -r backend/requirements-dev.txt
-pytest                        # 141 tests
+pytest                        # 154 tests
 ```
 
 `pytest.ini` at the repo root sets the paths and `PYTHONPATH`, so bare `pytest` works. The
@@ -276,7 +303,7 @@ constant it controls:
 | `RELATION_MAX_WINDOWS_PER_PAIR` | 8 | Windows scored per pair before the rest are left alone |
 | `RELATION_MAX_NAMES_PER_ARTICLE` | 12 | Names one article may pair up |
 | `RELATION_DROP_NARRATION` | off | Drop reporter narration from edges entirely |
-| `NEWS_TIME_BUDGET_SEC` | 5400 | Time the pipeline gives itself before finishing up |
+| `NEWS_TIME_BUDGET_SEC` | 5400 | Time a run gives itself before finishing up (each Actions analyser: 3600) |
 | `NEWS_COLLECT_BUDGET_SEC` | 1800 | Of that, the share collection may spend |
 | `NEWS_FINISH_GRACE_SEC` | 60 | How long a run waits on workers still mid-article |
 | `NEWS_MAX_ARTICLES` | 300 | Articles one run will analyse |
@@ -377,7 +404,8 @@ Free tier throughout:
   6543, not a direct connection: free-tier connection limits are low and the crawler
   borrows per request.
 - **Pipeline** — GitHub Actions, daily at 04:00 KST. Public repo, so runner minutes are
-  free and the 16 GB runner handles Playwright and torch.
+  free; the news stage fans out to four 4-vCPU runners for NLI, and the model is cached
+  between runs so four runners don't each fetch 550 MB from Hugging Face.
 - **Frontend** — Vercel.
 
 Setup guide: [docs/BACKEND_DEPLOY.md](docs/BACKEND_DEPLOY.md) *(in Korean)*.

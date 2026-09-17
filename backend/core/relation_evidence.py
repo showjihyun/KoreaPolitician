@@ -687,6 +687,28 @@ def all_pair_keys() -> List[str]:
             return [r[0] for r in cur.fetchall()]
 
 
+def pair_keys_observed_since(since: datetime, source: str = "news") -> List[str]:
+    """since 이후에 새로 적재된 관측의 쌍 키.
+
+    분석을 여러 러너로 나눠 돌리면 마무리 단계는 각 러너가 넘겨준 쌍 목록을
+    모아 집계한다. 그런데 러너 하나가 한도에 걸려 죽으면 목록을 넘기지 못한다.
+    그 러너가 죽기 전까지 저장한 관측은 DB 에 이미 있으므로, 여기서 한 번 더
+    찾아 합친다.
+
+    observed_at 은 행이 처음 들어갈 때만 찍힌다. 같은 (쌍, 기사)를 다시
+    분석해 덮어쓴 경우는 여기 잡히지 않으므로, 러너가 넘긴 목록을 대체하지
+    못하고 보탤 뿐이다.
+    """
+    with get_sync_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT pair_key FROM public.edge_observations "
+                "WHERE observed_at >= %s AND source = %s",
+                (since, source),
+            )
+            return [r[0] for r in cur.fetchall()]
+
+
 def aggregate_pairs(pair_keys: Sequence[str],
                     now: Optional[datetime] = None) -> Dict[str, Dict[str, Any]]:
     """쌍마다 집계된 엣지를 만든다. 승격 못 한 쌍은 결과에서 빠진다."""

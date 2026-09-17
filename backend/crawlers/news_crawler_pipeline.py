@@ -2,7 +2,9 @@ from dotenv import load_dotenv
 import os
 import time
 import hashlib
-from datetime import datetime, timedelta
+import argparse
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from playwright.sync_api import sync_playwright
 from newspaper import Article
 from bs4 import BeautifulSoup
@@ -51,13 +53,36 @@ except Exception as e:
     logger.warning(f"국회의원 이름 로드 실패: {e}")
     POLITICIANS = []
 
-# Initialize Core Services
-try:
-    analyzer = AffectiveAnalyzer()
-    logger.info("AffectiveAnalyzer 초기화 성공")
-except Exception as e:
-    logger.error(f"Failed to initialize AffectiveAnalyzer: {e}")
-    analyzer = None
+# NLI 모델은 처음 쓸 때 띄운다.
+#
+# 예전에는 이 모듈을 임포트하는 순간 모델(약 550MB)을 받아 올렸다. 그래서
+# 의원 이름 목록만 필요한 SNS 파이프라인도, 수집만 하는 단계도 모델을
+# 기다렸다. 수집·분석·마무리를 러너 여러 대로 나누면 그 비용이 러너마다
+# 붙고, 허깅페이스에 비인증 요청이 겹쳐 받기가 막힐 위험도 생긴다.
+analyzer = None
+_analyzer_failed = False
+_analyzer_lock = threading.Lock()
+
+
+def get_analyzer():
+    """분석기를 돌려준다. 띄우지 못하면 None 이고, 그 뒤로는 다시 시도하지 않는다.
+
+    실패해도 기사 저장은 계속한다. 관계는 빠지지만 화제성은 기사만으로
+    산출되기 때문이다. 대신 조용히 넘어가지 않고 처음 한 번 크게 남긴다.
+    """
+    global analyzer, _analyzer_failed
+    if analyzer is not None or _analyzer_failed:
+        return analyzer
+    with _analyzer_lock:
+        if analyzer is None and not _analyzer_failed:
+            try:
+                analyzer = AffectiveAnalyzer()
+                logger.info("AffectiveAnalyzer 초기화 성공")
+            except Exception as e:
+                _analyzer_failed = True
+                logger.error(f"[모델 없음] AffectiveAnalyzer 를 띄우지 못해 이번 회차는 "
+                             f"관계 판정 없이 기사만 저장한다: {e}")
+    return analyzer
 
 # DCP(Dynamic Contextual Propagation)는 이 파이프라인에서 더 이상 쓰지 않는다.
 # 두 가지 이유다. 첫째, 운영 환경에서는 동작한 적이 없다. DCPCalculator 가
@@ -699,7 +724,8 @@ def process_article(art, db_config, seen_titles, seen_contents, deadline=None):
         found_names = extract_politicians(content, POLITICIANS)
         if not found_names: return None
 
-        if len(found_names) >= 2:
+        nli = get_analyzer() if len(found_names) >= 2 else None
+        if nli is not None:
             relationships = []
             pair_names = pair_candidates(found_names, content)
             pairs_seen = 0
@@ -724,7 +750,7 @@ def process_article(art, db_config, seen_titles, seen_contents, deadline=None):
                         # 확인할 때 더 긴 이름(김윤덕)을 알아야 짧은 이름
                         # (김윤)의 오탐을 막을 수 있다. 쌍은 추려도 이름
                         # 확인은 기사에 나온 전체를 써야 한다.
-                        result = analyzer.analyze_pair(content, p1, p2, found_names)
+                        result = nli.analyze_pair(content, p1, p2, found_names)
                         if result:
                             relationships.append({
                                 "entity_a": p1, "entity_b": p2, **result,
@@ -744,7 +770,9 @@ def process_article(art, db_config, seen_titles, seen_contents, deadline=None):
 
         art['content'] = content
         art['politicians'] = found_names
-        art['base_date'] = datetime.now().strftime('%Y%m%d')
+        # 회차가 정한 날짜를 쓴다. 기사마다 now() 를 찍으면 자정(UTC)을 넘긴
+        # 회차에서 기사는 다음 날로, 화제성 산출은 전날로 갈라진다.
+        art.setdefault('base_date', datetime.now().strftime('%Y%m%d'))
 
         save_to_postgresql([art], db_config)
         pairs = save_observations(art)
@@ -778,21 +806,17 @@ def collect_all_sources_for_name(name, deadline=None):
 
     return results
 
-def run_pipeline(db_config):
-    logger.info("--------------------------------------------------")
-    logger.info(f"[파이프라인 실행 시작] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+def collect_news(collect_deadline=None):
+    """1~4단계. 수집하고, 중복을 걷어내고, 상한까지 자른 기사 목록을 돌려준다.
+
+    DB 에도 API 에도 쓰지 않는다. 그래서 수집만 따로 돌리는 러너는 비밀값
+    없이도 돈다.
+    """
+    started = time.time()
 
     # 1. 대상 선정 (전체 의원 수집)
-    # target_names = get_target_politicians(db_config, limit=20)
     target_names = POLITICIANS
     logger.info(f"이번 회차 타겟 수집 대상: 전체 {len(target_names)}명 병렬 수집 시작")
-
-    # 이 회차에 쓸 수 있는 시간. 러너가 잘라내기 전에 우리가 먼저 멈춘다.
-    budget_started = time.time()
-    deadline = budget_started + NEWS_TIME_BUDGET_SEC
-    collect_deadline = min(deadline, budget_started + NEWS_COLLECT_BUDGET_SEC)
-    logger.info(f"[시간 예산] 수집 {NEWS_COLLECT_BUDGET_SEC // 60}분 / "
-                f"전체 {NEWS_TIME_BUDGET_SEC // 60}분")
 
     # 2. 뉴스 소스 수집 (병렬 - 키워드 검색 + 섹션 스캔)
     news_pool = []
@@ -823,17 +847,26 @@ def run_pipeline(db_config):
             except Exception as e:
                 logger.error(f"Collection error ({task_info}): {e}")
 
-    if time.time() > collect_deadline:
-        logger.warning(f"[수집 예산 초과] {time.time() - budget_started:.0f}초 사용. "
+    if collect_deadline is not None and time.time() > collect_deadline:
+        logger.warning(f"[수집 예산 초과] {time.time() - started:.0f}초 사용. "
                        "일부 의원의 검색을 건너뛰었습니다.")
 
     # 3. 중복 제거
+    #
+    # 주소가 같은 기사, 그리고 제목이 같은 기사를 뺀다. 제목 검사는 원래
+    # 분석 워커 안에서만 했다. 분석을 러너 여러 대로 나누면 워커끼리 제목
+    # 집합을 나눠 갖지 못하므로, 나누기 전인 여기서 한 번 걸러야 같은 기사를
+    # 두 러너가 따로 분석하지 않는다.
     unique_news = []
     seen_urls = set()
+    seen_titles = set()
     for n in news_pool:
-        if n['url'] not in seen_urls:
-            unique_news.append(n)
-            seen_urls.add(n['url'])
+        title_hash = hashlib.md5((n.get('title') or '').encode('utf-8')).hexdigest()
+        if n['url'] in seen_urls or title_hash in seen_titles:
+            continue
+        unique_news.append(n)
+        seen_urls.add(n['url'])
+        seen_titles.add(title_hash)
 
     # 4. 분석량 상한
     #
@@ -851,7 +884,16 @@ def run_pipeline(db_config):
     if len(unique_news) > NEWS_MAX_ARTICLES:
         unique_news = unique_news[:NEWS_MAX_ARTICLES]
     logger.info(f"분석 대상 기사 총합: {len(unique_news)}개 "
-                f"(수집 {collected}개, 상한 {NEWS_MAX_ARTICLES})")
+                f"(수집 {collected}개, 상한 {NEWS_MAX_ARTICLES}, {time.time() - started:.0f}초)")
+    return unique_news
+
+
+def analyze_articles(articles, db_config, deadline, base_date=None):
+    """5단계. 기사를 분석해 저장하고 (저장 수, 건드린 쌍 키) 를 돌려준다."""
+    unique_news = articles
+    if base_date:
+        for art in unique_news:
+            art['base_date'] = base_date
 
     # 5. 분석 및 저장 (병렬)
     #
@@ -922,48 +964,227 @@ def run_pipeline(db_config):
     logger.info(f"[파이프라인 실행 종료] 총 {total_saved}개 기사 처리됨 "
                 f"(검토 {processed_count}건, 분석 {time.time() - analysis_started:.0f}초)")
 
+    return total_saved, touched_pairs
+
+
+def finish_run(touched_pairs, base_date=None, since=None):
+    """6~7단계. 쌍별로 근거를 집계해 엣지를 쓰고, 화제성을 산출한다.
+
+    since 를 주면 그 뒤에 적재된 관측의 쌍도 함께 집계한다. 분석 러너가
+    한도에 걸려 쌍 목록을 넘기지 못해도, 죽기 전까지 저장한 근거는 반영된다.
+    """
+    pairs = set(touched_pairs or [])
+    if since is not None:
+        try:
+            recovered = set(relation_evidence.pair_keys_observed_since(since)) - pairs
+            if recovered:
+                logger.info(f"[관계 집계] 넘겨받지 못한 쌍 {len(recovered)}개를 DB 에서 찾아 더한다")
+            pairs |= recovered
+        except Exception as e:
+            logger.error(f"[관계 집계] since 이후 관측을 읽지 못해 넘겨받은 쌍만 집계한다: {e}")
+
     # 6. 관계 집계. 기사 단위 판정을 쌍 단위로 모아 엣지를 다시 쓴다.
     #
     # 이 단계가 없으면 엣지는 마지막 기사 하나로 덮인다. 여기서 통신사
     # 전재를 한 사건으로 묶고(SimHash), 진영이 다른 매체가 같은 극성을
     # 보도했는지 세고(교차 검증), 오래된 근거의 무게를 줄인다(반감기).
-    if touched_pairs:
+    if pairs:
         # 분석에 한 시간 넘게 걸리는 회차가 있다. Render 무료 인스턴스는
         # 15분 무트래픽이면 잠들므로, 시작할 때 깨워 둔 것과 무관하게 지금
         # 다시 자고 있다. 여기서 안 깨우면 첫 POST 들이 타임아웃으로 버려져
         # 그날 관계가 조용히 유실된다.
         wake_api()
-        saved, total = push_aggregated_edges(touched_pairs)
-        logger.info(f"[관계 집계] 쌍 {len(set(touched_pairs))}개 중 {total}개 승격, {saved}개 저장")
+        saved, total = push_aggregated_edges(sorted(pairs))
+        logger.info(f"[관계 집계] 쌍 {len(pairs)}개 중 {total}개 승격, {saved}개 저장")
 
     # 수집한 뉴스로 화제성을 산출한다. X/인스타는 비로그인 수집이 막혔고
     # 유튜브도 불안정해 화제성 테이블이 계속 비어 있었다. 뉴스 언급 빈도는
     # 이미 안정적으로 수집되는 데이터이고 정치적 화제성의 직접적인 신호다.
     try:
-        rebuild_from_news(datetime.now().strftime("%Y%m%d"))
+        rebuild_from_news(base_date or datetime.now().strftime("%Y%m%d"))
     except Exception as e:
         logger.error(f"화제성 산출 실패: {e}")
 
     logger.info("--------------------------------------------------")
+
+
+def select_shard(articles, shard, shards):
+    """shards 대 중 shard 번째가 맡을 기사. 순서로 나누므로 매번 같게 갈린다."""
+    if shards < 1 or not 0 <= shard < shards:
+        raise ValueError(f"잘못된 샤드 지정: {shard}/{shards}")
+    return [art for i, art in enumerate(articles) if i % shards == shard]
+
+
+def run_pipeline(db_config):
+    """한 프로세스에서 수집부터 마무리까지 전부 돈다. 로컬과 도커용이다.
+
+    GitHub Actions 는 단계를 러너 여러 대로 나눠 돈다(.github/workflows/crawl.yml).
+    """
+    logger.info("--------------------------------------------------")
+    logger.info(f"[파이프라인 실행 시작] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # 이 회차에 쓸 수 있는 시간. 러너가 잘라내기 전에 우리가 먼저 멈춘다.
+    budget_started = time.time()
+    deadline = budget_started + NEWS_TIME_BUDGET_SEC
+    collect_deadline = min(deadline, budget_started + NEWS_COLLECT_BUDGET_SEC)
+    base_date = datetime.now().strftime('%Y%m%d')
+    logger.info(f"[시간 예산] 수집 {NEWS_COLLECT_BUDGET_SEC // 60}분 / "
+                f"전체 {NEWS_TIME_BUDGET_SEC // 60}분")
+
+    articles = collect_news(collect_deadline)
+    total_saved, touched_pairs = analyze_articles(articles, db_config, deadline, base_date)
+    finish_run(touched_pairs, base_date)
     return total_saved
+
+# --- 단계별 실행 -------------------------------------------------------------
+#
+# GitHub Actions 러너 한 대(vCPU 4개)로는 뉴스가 많은 날의 NLI 계산을 90분
+# 안에 끝내지 못한다. 2026-09-15, 09-16 두 회차는 모두 예산에 걸려 300건 중
+# 215건, 176건만 분석했다. 러너가 느려서가 아니었다(둘 다 AMD EPYC, AVX-512).
+# 실제 창 길이(약 230토큰)에서 NLI 한 번이 코어 하나로 0.6초이고, 창 하나에
+# 4번, 쌍 하나에 창 최대 8개, 기사 하나에 쌍 최대 66개를 부르기 때문이다.
+#
+# 그래서 수집은 한 번, 분석은 러너 여러 대에 나눠, 마무리는 다시 한 번
+# 돈다. 러너 사이에는 JSON 파일(Actions 아티팩트)만 오간다.
+#
+#   collect  --out articles.json                         기사 목록 (DB 안 씀)
+#   analyze  --articles articles.json --shard i --shards n --out pairs-i.json
+#   finish   --pairs-dir DIR --base-date YYYYMMDD --since ISO8601
+#
+# 인자 없이 부르면 예전처럼 한 프로세스에서 전부 돈다(로컬, 도커, run_news_sns.py).
+
+#: finish 가 since 뒤의 관측을 찾을 때 두는 여유. since 는 러너 시계, observed_at
+#: 은 DB 시계라 조금 어긋날 수 있다. 쌍이 몇 개 더 잡혀도 집계는 같은 결과다.
+SINCE_MARGIN = timedelta(minutes=10)
+
+
+def _write_json(path, payload):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _read_json(path):
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _github_output(**values):
+    """Actions 의 다음 잡이 읽을 값을 남긴다. Actions 밖에서는 아무 일도 안 한다."""
+    target = os.environ.get("GITHUB_OUTPUT")
+    if not target:
+        return
+    with open(target, "a", encoding="utf-8") as f:
+        for key, value in values.items():
+            f.write(f"{key}={value}\n")
+
+
+def cli_collect(args):
+    started = datetime.now(timezone.utc)
+    base_date = datetime.now().strftime('%Y%m%d')
+    budget_started = time.time()
+    logger.info(f"[수집] 예산 {NEWS_COLLECT_BUDGET_SEC // 60}분")
+
+    articles = collect_news(budget_started + NEWS_COLLECT_BUDGET_SEC)
+    _write_json(args.out, {"base_date": base_date, "collected_at": started.isoformat(),
+                           "articles": articles})
+    _github_output(base_date=base_date, since=started.isoformat(), articles=len(articles))
+
+    if not articles:
+        # 조용한 0 은 예외보다 나쁘다. 네이버 마크업이 바뀌면 이렇게 보인다.
+        logger.error("[수집 0건] 분석할 기사가 없다. 수집기가 고장 났을 가능성이 크다.")
+        return 1
+    return 0
+
+
+def cli_analyze(args):
+    payload = _read_json(args.articles)
+    articles = select_shard(payload["articles"], args.shard, args.shards)
+    deadline = time.time() + NEWS_TIME_BUDGET_SEC
+    logger.info(f"[분석 {args.shard + 1}/{args.shards}] 기사 {len(articles)}건 "
+                f"(전체 {len(payload['articles'])}건), 예산 {NEWS_TIME_BUDGET_SEC // 60}분")
+
+    ensure_news_schema()
+    relation_evidence.ensure_schema()
+    saved, pairs = analyze_articles(articles, db_config_from_env(), deadline,
+                                    payload.get("base_date"))
+    _write_json(args.out, {"shard": args.shard, "shards": args.shards,
+                           "base_date": payload.get("base_date"),
+                           "analyzed": len(articles), "saved": saved,
+                           "pairs": sorted(set(pairs))})
+    return 0
+
+
+def cli_finish(args):
+    pairs, reports = [], []
+    pairs_dir = Path(args.pairs_dir)
+    for path in sorted(pairs_dir.glob("pairs-*.json")) if pairs_dir.is_dir() else []:
+        report = _read_json(path)
+        reports.append(report)
+        pairs.extend(report.get("pairs") or [])
+
+    expected = args.shards
+    got = sorted(r["shard"] for r in reports)
+    logger.info(f"[마무리] 분석 결과 {len(reports)}/{expected}개, 저장 "
+                f"{sum(r.get('saved', 0) for r in reports)}건, 쌍 {len(set(pairs))}개")
+    if expected and len(reports) < expected:
+        missing = sorted(set(range(expected)) - set(got))
+        logger.warning(f"[마무리] 결과를 넘기지 못한 분석 러너: {missing}. "
+                       "그 러너가 저장한 근거는 DB 에서 찾아 집계한다.")
+
+    base_date = args.base_date or next((r["base_date"] for r in reports if r.get("base_date")), None)
+    since = datetime.fromisoformat(args.since) - SINCE_MARGIN if args.since else None
+
+    ensure_news_schema()
+    relation_evidence.ensure_schema()
+    finish_run(pairs, base_date, since)
+    return 0
+
+
+def cli_full(args):
+    # 무료 인스턴스는 자고 있다. 먼저 깨워야 관계 저장이 유실되지 않는다.
+    ensure_news_schema()
+    relation_evidence.ensure_schema()
+    if not wake_api():
+        logger.warning("API 를 깨우지 못했습니다. 관계 저장은 실패할 수 있으나 "
+                       "뉴스 수집/감성분석은 계속 진행합니다.")
+    run_pipeline(db_config_from_env())
+    return 0
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(description="뉴스 수집·관계 분석 파이프라인")
+    stages = parser.add_subparsers(dest="stage")
+
+    collect = stages.add_parser("collect", help="기사 목록만 모은다")
+    collect.add_argument("--out", required=True)
+
+    analyze = stages.add_parser("analyze", help="기사 목록의 일부를 분석해 저장한다")
+    analyze.add_argument("--articles", required=True)
+    analyze.add_argument("--shard", type=int, required=True)
+    analyze.add_argument("--shards", type=int, required=True)
+    analyze.add_argument("--out", required=True)
+
+    finish = stages.add_parser("finish", help="관계를 집계하고 화제성을 산출한다")
+    finish.add_argument("--pairs-dir", required=True)
+    finish.add_argument("--shards", type=int, default=0, help="기대하는 분석 결과 수")
+    finish.add_argument("--base-date")
+    finish.add_argument("--since", help="collect 가 시작한 시각(ISO 8601)")
+    return parser
+
 
 if __name__ == "__main__":
     # 이 스크립트는 1회 실행이다. 반복 스케줄링은 상위(run_news_sns.py 또는
     # GitHub Actions cron)가 담당한다. 예전에는 마지막에 60분 sleep 이 있어
     # Actions job 이 수집을 끝내고도 잠들어 timeout 으로 취소됐다.
-    db_config = db_config_from_env()
+    args = build_parser().parse_args()
+    handler = {"collect": cli_collect, "analyze": cli_analyze,
+               "finish": cli_finish}.get(args.stage, cli_full)
 
-    logger.info("=== Autonomous Political Analysis Service v1.0 ===")
+    logger.info(f"=== Autonomous Political Analysis Service v1.0 ({args.stage or 'full'}) ===")
 
     exit_code = 0
     try:
-        ensure_news_schema()
-        relation_evidence.ensure_schema()
-        # 무료 인스턴스는 자고 있다. 먼저 깨워야 관계 저장이 유실되지 않는다.
-        if not wake_api():
-            logger.warning("API 를 깨우지 못했습니다. 관계 저장은 실패할 수 있으나 "
-                           "뉴스 수집/감성분석은 계속 진행합니다.")
-        run_pipeline(db_config)
+        exit_code = handler(args)
     except Exception as e:
         logger.error(f"Pipeline critical error in single run: {e}")
         logger.error(traceback.format_exc())
@@ -974,10 +1195,10 @@ if __name__ == "__main__":
 
     # 분석 워커가 아직 돌고 있으면 파이썬은 종료할 때 그 스레드를 join 한다.
     #
-    # 여기까지 왔다면 집계와 화제성은 이미 끝났다. 남은 워커를 기다려서
-    # 얻을 것은 없고, 러너 한도에 걸려 회차가 실패로 남을 위험만 있다.
-    # 저장은 워커 안에서 커밋되고 엣지는 API 로 올라갔으며 로그도 방금
-    # 내려썼으므로, 남은 스레드가 있으면 여기서 끊는다.
+    # 여기까지 왔다면 저장은 워커 안에서 커밋됐고 결과 파일도 썼다(analyze),
+    # 또는 집계와 화제성이 끝났다(full). 남은 워커를 기다려서 얻을 것은 없고,
+    # 러너 한도에 걸려 실패로 남을 위험만 있다. 로그도 방금 내려썼으므로,
+    # 남은 스레드가 있으면 여기서 끊는다.
     if threading.active_count() > 1:
         os._exit(exit_code)
 

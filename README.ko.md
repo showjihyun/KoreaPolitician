@@ -26,7 +26,7 @@ Zero-Shot NLI 모델에게 누가 누구를 비판했고 지지했는지 물어,
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![매일 수집](https://img.shields.io/badge/news-refreshed%20daily-34d399)
-![테스트](https://img.shields.io/badge/tests-141-22d3ee)
+![테스트](https://img.shields.io/badge/tests-154-22d3ee)
 
 ---
 
@@ -76,8 +76,8 @@ flowchart TB
     end
 
     subgraph P["매일 도는 파이프라인 — GitHub Actions, 04:00 KST"]
-        E["1 · 수집<br/>Playwright, 30분 예산"]
-        F["2 · 추출<br/>방향형 Zero-Shot NLI"]
+        E["1 · 수집<br/>러너 1대 · Playwright, 30분 예산"]
+        F["2 · 추출<br/>러너 4대 병렬 · 방향형 Zero-Shot NLI"]
         M(["mDeBERTa-v3-base<br/>mnli-xnli"])
         G["3 · 적재<br/>기사 판정 하나당 한 행"]
         H["4 · 집계<br/>SimHash 사건 묶기 · 진영 교차검증<br/>· 반감기 45일"]
@@ -106,6 +106,13 @@ flowchart TB
 [그 근거가 된 편향 연구](docs/MEDIA_BIAS_RESEARCH.md)
 **워크플로우:** [`.github/workflows/crawl.yml`](.github/workflows/crawl.yml) ·
 [실행 이력](https://github.com/showjihyun/KoreaPolitician/actions/workflows/crawl.yml)
+
+매일 밤 실행은 잡 여섯 개입니다. 하나가 기사 목록을 모으고, 넷이 그 목록을 나눠
+병렬로 분석하며(러너마다 네 건에 한 건씩, 각자 60분 예산), 하나가 근거를 집계해
+공개합니다. 유튜브 화제성과 공동발의 수집은 옆에서 독립된 잡으로 돕니다. 러너
+사이에는 JSON 만 오갑니다 — 기사 목록, 그리고 분석 러너마다 건드린 쌍 목록. 분석
+러너 하나가 죽어도 마무리 잡은 돌고, 그 러너가 죽기 전까지 저장한 근거는 DB 에서
+시각으로 찾아 함께 집계합니다.
 
 짧게 요약하면:
 
@@ -189,6 +196,14 @@ flowchart TB
   하나에 채점할 창을 8개로 묶고(어차피 상위 3개만 평균합니다 — 실측으로 그런 쌍 하나가
   NLI 120회에서 32회로), 남은 워커는 정해진 유예만큼만 기다린 뒤 두고 가며 그때까지의
   결과를 공개합니다.
+- **실제로 돌리는 길이로 재십시오.** 느린 밤을 추적하면서 로컬에서 재 본 NLI 한 번은
+  17ms 였고, 그 숫자 때문에 느려진 원인을 러너 고장으로 보게 됐습니다. 그런데 그건
+  40토큰짜리 문장으로 잰 값이었습니다. 파이프라인이 실제로 채점하는 창은 약 230토큰이고,
+  거기서는 코어 하나로 **608ms** 입니다. 35배이고, 쌍당 30~80초를 정확히 설명하는
+  값입니다. 다른 두 용의자 — 스레드가 코어를 넘치게 쓰는 것, 느린 파이썬 토크나이저 —
+  도 각각 재서 뺐고, 워크플로에 새로 남긴 하드웨어 줄은 느렸던 두 밤이 모두 AVX-512 를
+  갖춘 EPYC 기계였다는 걸 보여 줬습니다. 고장 난 것은 없었습니다. 일이 러너 한 대의
+  몫을 넘었고, 그래서 이제 네 대에서 돕니다.
 - **`vercel.json` 에는 주석을 넣을 수 없고, 그 실패는 눈에 띄지 않습니다.** JSON 에 주석이
   없으니 `"//"` 키를 쓰는 관습이 있는데, Vercel 은 이를 스키마 검증에서 거부합니다.
   *빌드가 시작되기 전에* 말입니다. 그래서 rewrite 수정과 CSP 헤더를 담은 커밋이 한 번도
@@ -230,6 +245,16 @@ python backend/crawlers/news_crawler_pipeline.py   # 뉴스 수집 + 관계 집�
 python backend/crawlers/sns_crawler_pipeline.py    # 유튜브 화제성
 ```
 
+뉴스 파이프라인은 인자 없이 부르면 한 프로세스에서 모든 단계를 돕니다. Actions 는 같은
+단계를 러너 여러 대로 나눠 돌리고, 로컬에서도 똑같이 할 수 있습니다.
+
+```bash
+python backend/crawlers/news_crawler_pipeline.py collect --out articles.json
+python backend/crawlers/news_crawler_pipeline.py analyze --articles articles.json \
+       --shard 0 --shards 4 --out pairs/pairs-0.json        # 샤드마다 하나씩
+python backend/crawlers/news_crawler_pipeline.py finish --pairs-dir pairs --shards 4
+```
+
 관계 추출 모델(약 550MB)을 처음 한 번 내려받습니다. Windows PowerShell 에서는
 `$env:PYTHONPATH="backend"` 형태로 지정합니다.
 
@@ -237,7 +262,7 @@ python backend/crawlers/sns_crawler_pipeline.py    # 유튜브 화제성
 pip install -r backend/requirements-api.txt \
             -r backend/requirements-crawler.txt \
             -r backend/requirements-dev.txt
-pytest                        # 141개
+pytest                        # 154개
 ```
 
 저장소 루트의 `pytest.ini` 가 경로와 `PYTHONPATH` 를 잡아 주므로 `pytest` 만 쳐도 돕니다.
@@ -263,7 +288,7 @@ pytest                        # 141개
 | `RELATION_MAX_WINDOWS_PER_PAIR` | 8 | 쌍 하나에서 점수를 매길 창의 최대 개수 |
 | `RELATION_MAX_NAMES_PER_ARTICLE` | 12 | 기사 한 건에서 쌍을 만들 이름의 최대 개수 |
 | `RELATION_DROP_NARRATION` | 꺼짐 | 켜면 기자 서술을 엣지에서 아예 뺍니다 |
-| `NEWS_TIME_BUDGET_SEC` | 5400 | 파이프라인이 마무리 전까지 자신에게 주는 시간 |
+| `NEWS_TIME_BUDGET_SEC` | 5400 | 한 회차가 마무리 전까지 자신에게 주는 시간 (Actions 분석 러너는 각 3600) |
 | `NEWS_COLLECT_BUDGET_SEC` | 1800 | 그중 수집 단계가 쓸 수 있는 몫 |
 | `NEWS_FINISH_GRACE_SEC` | 60 | 기사를 붙잡고 있는 워커를 기다려 주는 시간 |
 | `NEWS_MAX_ARTICLES` | 300 | 한 회차가 분석할 기사 수 |
@@ -361,8 +386,9 @@ curl "https://korea-politician-api.onrender.com/api/graph/all"
 - **데이터베이스** — Supabase PostgreSQL. 직결이 아니라 Supavisor 트랜잭션 풀러(6543번
   포트)를 경유합니다. 무료 티어의 커넥션 한도가 낮고 크롤러는 요청마다 풀에서 빌려 쓰기
   때문입니다.
-- **파이프라인** — GitHub Actions, 매일 04:00 KST. 공개 저장소라 러너 사용량이 무료이고
-  16GB 러너가 Playwright 와 torch 를 감당합니다.
+- **파이프라인** — GitHub Actions, 매일 04:00 KST. 공개 저장소라 러너 사용량이 무료입니다.
+  뉴스 분석은 vCPU 4개짜리 러너 네 대로 나눠 돌고, 모델은 회차 사이에 캐시해 러너
+  네 대가 허깅페이스에서 550MB 를 각자 받지 않게 합니다.
 - **프론트엔드** — Vercel.
 
 구성 가이드: [docs/BACKEND_DEPLOY.md](docs/BACKEND_DEPLOY.md).
