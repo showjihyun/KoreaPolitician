@@ -25,7 +25,7 @@ higher than the canvas draws.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Daily news pipeline](https://img.shields.io/badge/news-refreshed%20daily-34d399)
-![Tests](https://img.shields.io/badge/tests-154-22d3ee)
+![Tests](https://img.shields.io/badge/tests-162-22d3ee)
 
 ---
 
@@ -59,7 +59,7 @@ opens underneath whichever of them you click.
 | **Newly found relations** | The right rail lists what the last run added, newest first, each row tagged ally or conflict and drawn with an arrow only where the evidence gave one. Every row opens the same evidence drawer — which is also how the relationship lines stay reachable for anyone who can't click a line on a canvas. |
 | **The person behind the node** | Picking someone — in the graph or from the ranking — opens attention / news / YouTube / terms, then their recent mentions with outlet, view count and a link to each. The profile card behind that carries committees, office, email, career, and links to the Assembly profile, homepage and Wikipedia. |
 | **Article focus weighting** | A piece listing ten members is not ten times the signal about each. Every mention is discounted by `1/√n`, for attention scoring and relationship evidence alike. |
-| **Two time windows, stated separately** | Attention is a 7-day rolling window; relationships are cumulative since collection began on 2026-08-30. Mixing them silently would put numbers on screen that don't add up, so each rail carries a "?" that says which window it is on. |
+| **Two time windows, stated separately** | Attention is a 7-day rolling window; relationships are cumulative since collection began on 2026-08-30. Mixing them silently would put numbers on screen that don't add up, so each rail carries a "?" that says which window it is on. Every date on the board is Korea Standard Time, including the day a nightly run stamps its data with. |
 | **A board you can rearrange** | The three dividers drag and reset on a double-click, nodes pin where you drop them and release on a double-click, and the pane widths, the face-or-name choice and the language all survive a reload. The ranking, the feed and the dividers are ordinary keyboard-reachable controls; the canvas is not, which is why the feed exists. |
 | **Open evidence API** | Read-only, no auth — see [Inspecting the evidence](#inspecting-the-evidence). |
 | **Bilingual** | Korean and English throughout — member names, parties, committees, relationship types, press camps. |
@@ -275,7 +275,7 @@ The relationship model (~550 MB) downloads once on first run. On Windows PowerSh
 pip install -r backend/requirements-api.txt \
             -r backend/requirements-crawler.txt \
             -r backend/requirements-dev.txt
-pytest                        # 154 tests
+pytest                        # 162 tests
 ```
 
 `pytest.ini` at the repo root sets the paths and `PYTHONPATH`, so bare `pytest` works. The

@@ -17,6 +17,7 @@ from core.graph_storage import graph_storage, run_sync, close_sync
 from core.db_config import close_sync_pool, db_config_from_env, get_sync_pool
 from core.name_matcher import find_names
 from core.hotness import update_summary, youtube_score
+from core.service_time import now_kst
 from crawlers.view_count import parse_view_count
 
 # Load environment variables
@@ -163,7 +164,7 @@ class SNSViralityCollector:
                         "platform": platform,
                         "impact": hot_score,
                         "content": text[:100],
-                        "last_seen": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        "last_seen": now_kst().strftime("%Y-%m-%d %H:%M:%S")
                     }
                 ))
                 logger.info(f"  [Relation Found] {source_name} --[SNS]--> {target_name} ({platform})")

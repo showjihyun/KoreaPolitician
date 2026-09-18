@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import Dict, Iterable, List, Sequence
 
 from core.db_config import get_sync_pool
+from core.service_time import service_date
 
 logger = logging.getLogger(__name__)
 
@@ -270,7 +271,7 @@ def mark_data_updated(when: str = None) -> None:
     (우리가 CI 에서 쓰지 않는 데몬)만 갱신해서 값이 멈춰 있었다. 화면에
     "데이터 기준 시각" 을 보여주려면 실제 수집 시점이 들어가야 한다.
     """
-    stamp = when or datetime.now().strftime("%Y-%m-%d")
+    stamp = when or service_date("%Y-%m-%d")
     pool = get_sync_pool()
     conn = None
     try:

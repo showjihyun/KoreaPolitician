@@ -15,6 +15,7 @@ from core.hotness import ensure_news_schema, focus_weight, rebuild_from_news
 from core import relation_evidence
 from core.db_config import (api_base_url, close_sync_pool,
                             db_config_from_env, env, get_sync_pool)
+from core.service_time import now_kst, service_date
 import logging
 import threading
 import traceback
@@ -229,7 +230,7 @@ def save_to_postgresql(articles, db_config=None):
     try:
         with get_sync_pool().connection() as conn:
             with conn.cursor() as cur:
-                today_yyyymmdd = datetime.now().strftime('%Y%m%d')
+                today_yyyymmdd = service_date()
 
                 for art in articles:
                     # url 유니크 제약 기반 upsert. 경쟁 조건 없이 한 번의 왕복으로 끝난다.
@@ -376,7 +377,7 @@ def crawl_custom_news_list(date_str, sid1="100", max_pages=1):
 def crawl_past_30_days(max_articles_per_day=5):
     """과거 60일간 뉴스 수집 (병렬 처리)"""
     all_articles = []
-    today = datetime.now()
+    today = now_kst()
 
     def crawl_single_day(day_offset):
         """단일 날짜의 뉴스 수집"""
@@ -493,7 +494,7 @@ def crawl_naver_section(sid1, max_pages=SECTION_MAX_PAGES):
                             "title": title,
                             "url": url,
                             "press": press,
-                            "date": datetime.now().strftime("%Y-%m-%d")
+                            "date": now_kst().strftime("%Y-%m-%d")
                         })
                 logger.info(f"[{section_name}] 페이지 {page_num} 완료: {matched_count}개 기사 매칭됨.")
 
@@ -540,7 +541,7 @@ _NAVER_SEARCH_EXTRACT = """() => {
 
 def crawl_naver_news_search(keyword, max_articles=10):
     articles = []
-    end_date = datetime.now()
+    end_date = now_kst()
     start_date = end_date - timedelta(days=365)
     ds = start_date.strftime("%Y.%m.%d")
     de = end_date.strftime("%Y.%m.%d")
@@ -575,7 +576,7 @@ def crawl_naver_news_search(keyword, max_articles=10):
                         # 언론사를 못 읽으면 진영을 배정할 수 없다. 빈 값으로
                         # 두면 집계가 "미상" 으로 다루고 중도로 떨어뜨린다.
                         "press": row.get("press") or "",
-                        "date": datetime.now().strftime("%Y-%m-%d"),
+                        "date": now_kst().strftime("%Y-%m-%d"),
                     })
                     if len(articles) >= max_articles:
                         break
@@ -613,7 +614,7 @@ def crawl_cnn_search(keyword, max_articles=3):
                 url = title_el.get_attribute("href")
                 if url.startswith("/"): url = "https://www.cnn.com" + url
                 if url and title:
-                    articles.append({"title": title, "url": url, "press": "CNN", "date": datetime.now().strftime("%Y-%m-%d")})
+                    articles.append({"title": title, "url": url, "press": "CNN", "date": now_kst().strftime("%Y-%m-%d")})
                 if len(articles) >= max_articles: break
         except Exception as e:
             logger.warning(f"CNN crawling failed: {e}")
@@ -640,7 +641,7 @@ def crawl_bbc_search(keyword, max_articles=3):
                 url = title_el.get_attribute("href")
                 if url.startswith("/"): url = "https://www.bbc.com" + url
                 if url and title:
-                    articles.append({"title": title, "url": url, "press": "BBC", "date": datetime.now().strftime("%Y-%m-%d")})
+                    articles.append({"title": title, "url": url, "press": "BBC", "date": now_kst().strftime("%Y-%m-%d")})
                 if len(articles) >= max_articles: break
         except Exception as e:
             logger.warning(f"BBC crawling failed: {e}")
@@ -667,7 +668,7 @@ def crawl_nhk_search(keyword, max_articles=3):
                 url = title_el.get_attribute("href")
                 if url.startswith("/"): url = "https://www3.nhk.or.jp" + url
                 if url and title:
-                    articles.append({"title": title, "url": url, "press": "NHK World", "date": datetime.now().strftime("%Y-%m-%d")})
+                    articles.append({"title": title, "url": url, "press": "NHK World", "date": now_kst().strftime("%Y-%m-%d")})
                 if len(articles) >= max_articles: break
         except Exception as e:
             logger.warning(f"NHK crawling failed: {e}")
@@ -772,7 +773,7 @@ def process_article(art, db_config, seen_titles, seen_contents, deadline=None):
         art['politicians'] = found_names
         # 회차가 정한 날짜를 쓴다. 기사마다 now() 를 찍으면 자정(UTC)을 넘긴
         # 회차에서 기사는 다음 날로, 화제성 산출은 전날로 갈라진다.
-        art.setdefault('base_date', datetime.now().strftime('%Y%m%d'))
+        art.setdefault('base_date', service_date())
 
         save_to_postgresql([art], db_config)
         pairs = save_observations(art)
@@ -1001,7 +1002,7 @@ def finish_run(touched_pairs, base_date=None, since=None):
     # 유튜브도 불안정해 화제성 테이블이 계속 비어 있었다. 뉴스 언급 빈도는
     # 이미 안정적으로 수집되는 데이터이고 정치적 화제성의 직접적인 신호다.
     try:
-        rebuild_from_news(base_date or datetime.now().strftime("%Y%m%d"))
+        rebuild_from_news(base_date or service_date())
     except Exception as e:
         logger.error(f"화제성 산출 실패: {e}")
 
@@ -1027,7 +1028,7 @@ def run_pipeline(db_config):
     budget_started = time.time()
     deadline = budget_started + NEWS_TIME_BUDGET_SEC
     collect_deadline = min(deadline, budget_started + NEWS_COLLECT_BUDGET_SEC)
-    base_date = datetime.now().strftime('%Y%m%d')
+    base_date = service_date()
     logger.info(f"[시간 예산] 수집 {NEWS_COLLECT_BUDGET_SEC // 60}분 / "
                 f"전체 {NEWS_TIME_BUDGET_SEC // 60}분")
 
@@ -1080,7 +1081,7 @@ def _github_output(**values):
 
 def cli_collect(args):
     started = datetime.now(timezone.utc)
-    base_date = datetime.now().strftime('%Y%m%d')
+    base_date = service_date()
     budget_started = time.time()
     logger.info(f"[수집] 예산 {NEWS_COLLECT_BUDGET_SEC // 60}분")
 

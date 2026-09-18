@@ -21,6 +21,8 @@ from contextlib import asynccontextmanager
 import psycopg
 from psycopg.conninfo import make_conninfo
 from psycopg.types.json import Jsonb
+
+from core.service_time import kst_stamp
 from psycopg_pool import AsyncConnectionPool
 
 logger = logging.getLogger(__name__)
@@ -292,7 +294,7 @@ class GraphStorage:
                     rows = await cur.fetchall()
                     return [{
                         "id": r[0],
-                        "timestamp": r[1].strftime("%Y-%m-%d %H:%M:%S"),
+                        "timestamp": kst_stamp(r[1]),
                         "action": r[2],
                         "details": r[3]
                     } for r in rows]

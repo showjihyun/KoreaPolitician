@@ -9,6 +9,7 @@ from core.graph_storage import graph_storage
 from core.hotness import TREND_DAYS
 from core.media_outlets import CAMPS, coverage_table
 from core.db_config import db_config_from_env, env
+from core.service_time import kst_stamp
 from scripts.simple_importer import SimpleImporter, sync_member_profiles
 from core.image_manager import image_manager
 import logging
@@ -320,7 +321,7 @@ async def sns_hot_posts(member_name: str, limit: int = Query(5, ge=1, le=100)):
                     "content": r[2],
                     "engagement": r[3],
                     "hot_score": r[4],
-                    "date": r[5].strftime("%Y-%m-%d %H:%M:%S")
+                    "date": kst_stamp(r[5])
                 } for r in rows]
                 return JSONResponse(content={"posts": results})
     except Exception as e:
@@ -347,7 +348,7 @@ async def sns_trends(limit: int = Query(20, ge=1, le=200)):
                     "content": r[3],
                     "engagement": r[4],
                     "hot_score": r[5],
-                    "date": r[6].strftime("%Y-%m-%d %H:%M:%S")
+                    "date": kst_stamp(r[6])
                 } for r in rows]
                 return JSONResponse(content={"trends": results})
     except Exception as e:
@@ -528,7 +529,7 @@ async def periods():
                 """)
                 row = await cur.fetchone()
         rel_from, rel_to, collected = (row or (None, None, None))
-        day = lambda v: v.strftime("%Y-%m-%d") if v else None   # noqa: E731
+        day = lambda v: kst_stamp(v, "%Y-%m-%d")               # noqa: E731
         return JSONResponse(content={
             "sentiment": {
                 "mode": "cumulative",
