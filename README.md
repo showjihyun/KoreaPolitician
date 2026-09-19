@@ -7,7 +7,7 @@
 ![SYNDEO demo](docs/demo.gif)
 
 *Thirty seconds on the live board: the whole Assembly, the attention ranking, then one
-conflict opened down to the twelve articles behind it, in Korean and English.*
+conflict opened down to the articles behind it, in Korean and English.*
 
 296 members of the 22nd National Assembly and 8 parties. 139 relationship edges
 inferred from news text — 107 conflicts, 32 alliances — of which 101 carry an evidence

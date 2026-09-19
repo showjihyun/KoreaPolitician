@@ -19,7 +19,10 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import shutil
+import urllib.request
 import subprocess
 import sys
 import tempfile
@@ -33,10 +36,38 @@ SITE = "https://korea-politician.vercel.app/"
 W, H = 1440, 900
 GIF_W, GIF_H = 800, 500
 
-# 근거가 가장 두꺼운 관계. 진영 셋이 모두 보도해 실선으로 그려지는 쌍이라
-# 근거 패널이 이 화면에서 보여 줄 수 있는 것을 다 보여 준다. 데이터가 바뀌어
-# 이 쌍이 사라지면 아래 fallback 이 피드의 첫 줄을 대신 연다.
-PAIR = ("Kim Minseok", "Jung Chungrae")
+def pick_pair(site):
+    """그날 근거가 가장 많은 호불호 관계를 고른다.
+
+    예전에는 이름을 박아 뒀다(김민석·정청래). 관계는 매일 다시 집계되므로
+    2026-09-19 녹화에서 그 대립선이 사라져 있었고, 스크립트는 같은 두 사람의
+    언급선을 붙잡고 근거 패널을 기다리다 멈췄다. 근거 패널이 이 화면에서
+    보여 줄 수 있는 것을 다 보여 주려면 관측이 많은 쌍이어야 한다.
+    """
+    api = env_api(site)
+    with urllib.request.urlopen(f"{api}/graph/all?limit=300", timeout=180) as res:
+        data = json.load(res)
+    name = {n["id"]: (n.get("properties") or {}).get("name") for n in data["nodes"]}
+    best = None
+    for edge in data["relationships"]:
+        if edge["type"] not in ("NEGATIVE_SENTIMENT", "POSITIVE_SENTIMENT"):
+            continue
+        props = edge.get("properties") or {}
+        rank = (props.get("n_observations") or 0, props.get("camp_coverage") or 0)
+        if best is None or rank > best[0]:
+            best = (rank, edge["from"], edge["to"],
+                    name.get(edge["from"]), name.get(edge["to"]))
+    if best is None:
+        return None
+    log(f"[demo] 대상 쌍: {best[3]} - {best[4]} (관측 {best[0][0]}건, "
+        f"진영 커버 {best[0][1]})")
+    return {"aId": best[1], "bId": best[2]}
+
+
+def env_api(site):
+    """보드가 쓰는 API 주소. 배포 화면과 같은 곳을 본다."""
+    return os.environ.get("DEMO_API_BASE",
+                          "https://korea-politician-api.onrender.com/api")
 
 # 그래프 인스턴스는 컴포넌트 ref 안에 있다. 파이버를 거슬러 올라가
 # getPositions 를 가진 ref 를 찾아 window 에 걸어 둔다. 노드 좌표를 알아야
@@ -138,6 +169,7 @@ def log(*a):
 
 def record(video_dir: Path, site: str) -> tuple[Path, float]:
     """화면을 돌면서 webm 을 남긴다. (영상 경로, 잘라낼 앞부분 초) 를 돌려준다."""
+    pair = pick_pair(site)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=["--force-color-profile=srgb"])
         ctx_t0 = time.monotonic()
@@ -249,14 +281,15 @@ def record(video_dir: Path, site: str) -> tuple[Path, float]:
             "Click a relationship and the articles behind it open underneath",
             "관계선을 누르면 그 근거가 된 기사가 아래에 열립니다",
         )
-        target = page.evaluate(
-            """([a, b]) => {
+        target = pair and page.evaluate(
+            """(pair) => {
               const n = window.__net;
-              const nodes = n.body.data.nodes.get();
-              const na = nodes.find(x => x.label === a), nb = nodes.find(x => x.label === b);
-              if (!na || !nb) return null;
-              const edge = n.body.data.edges.get().find(e =>
-                (e.from === na.id && e.to === nb.id) || (e.from === nb.id && e.to === na.id));
+              const na = { id: pair.aId }, nb = { id: pair.bId };
+              if (!n.body.nodes[na.id] || !n.body.nodes[nb.id]) return null;
+              // 라벨이 있는 선만 호불호다. 같은 두 사람 사이에 언급선이 함께
+              // 있으면 그것을 집어서는 근거가 열리지 않는다.
+              const edge = n.body.data.edges.get().find(e => e.label &&
+                ((e.from === na.id && e.to === nb.id) || (e.from === nb.id && e.to === na.id)));
               if (!edge) return null;
               const p = n.getPositions([na.id, nb.id]);
               const mid = { x: (p[na.id].x + p[nb.id].x) / 2, y: (p[na.id].y + p[nb.id].y) / 2 };
@@ -265,7 +298,7 @@ def record(video_dir: Path, site: str) -> tuple[Path, float]:
                          animation: { duration: 1500, easingFunction: 'easeInOutQuad' } });
               return { edgeId: edge.id, aId: na.id, bId: nb.id };
             }""",
-            list(PAIR),
+            pair,
         )
         log("[demo] 대상 관계선:", target)
         page.wait_for_timeout(1700)
@@ -325,7 +358,10 @@ def record(video_dir: Path, site: str) -> tuple[Path, float]:
 
         # 근거가 길면 패널이 첫 기사에 붙어 열려 머리말이 가려진다
         # (.detail 의 scroll-snap). 위로 한 번 굴려 사건 수와 신뢰도부터 보여 준다.
-        page.wait_for_selector(".detail.evidence .ev-articles", timeout=20_000)
+        # 근거 기사가 없는 관계도 있다(집계 이전에 만들어진 것). 그때는
+        # 패널이 "근거 기록 없음" 을 띄우므로, 둘 중 먼저 오는 것을 기다린다.
+        page.wait_for_selector(".detail.evidence .ev-articles, .detail.evidence .ev-note",
+                               timeout=20_000)
         page.wait_for_timeout(500)
         page.evaluate(
             """() => {
