@@ -40,9 +40,13 @@ The design constraint that shapes everything else: **the evidence is press cover
 press coverage is not a neutral sample of reality.** News-value research predicts that
 conflict is reported far more than cooperation, and the first weeks of output were
 consistent with that — 107 conflict edges against 32 alliance edges on 2026-09-11. The
-gap has since narrowed to 362 against 275, and the pipeline cannot tell you why: more
-articles now clear the analysis each night, and the pipeline's own scoring changed on
-2026-09-13. It also cannot distinguish "the Assembly is mostly conflict" from "conflict
+gap has since narrowed to 362 against 275. The obvious suspect was the pipeline's own
+scoring change of 2026-09-13, which caps how many sentence windows each pair is scored
+on; running the same 22 articles with the cap on and off flipped **no verdict at all**,
+and the median pair is decided on one window, two at most
+(`backend/scripts/compare_window_cap.py`). What changed instead is how much gets read:
+six runners now analyse the whole nightly batch where one used to reach 60-75% of it.
+The pipeline still cannot distinguish "the Assembly is mostly conflict" from "conflict
 is mostly what gets printed," because press coverage is the only thing it can see. So it
 is built to expose the skew rather than launder it: a relationship only one camp reported
 stays dashed at half weight, no matter how many articles back it.
