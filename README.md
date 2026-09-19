@@ -9,17 +9,17 @@
 *Thirty seconds on the live board: the whole Assembly, the attention ranking, then one
 conflict opened down to the articles behind it, in Korean and English.*
 
-296 members of the 22nd National Assembly and 8 parties. 139 relationship edges
-inferred from news text — 107 conflicts, 32 alliances — of which 101 carry an evidence
+296 members of the 22nd National Assembly and 8 parties. 637 relationship edges
+inferred from news text — 362 conflicts, 275 alliances — of which 607 carry an evidence
 log you can open article by article. A daily GitHub Actions pipeline reads the politics,
 economy and society sections of Naver News plus a per-member search, asks a zero-shot
 NLI model who criticised or defended whom, and folds the answer into a running archive.
 Bilingual (한국어 / English).
 
-*Counts are from `/api/graph/all`, checked 2026-09-11, and move every night — see
+*Counts are from `/api/graph/all`, checked 2026-09-19, and move every night — see
 [Inspecting the evidence](#inspecting-the-evidence) to re-derive them. The board's own
-header counts rows in the database instead, and currently reads five conflict edges
-higher than the canvas draws.*
+header counts rows in the database instead, and currently reads 70 conflict edges higher
+than the canvas draws.*
 
 ### ▶ **[Try it live](https://korea-politician.vercel.app/)** · [Architecture](#how-it-works) · [Workflow](.github/workflows/crawl.yml) · [Source](https://github.com/showjihyun/KoreaPolitician)
 
@@ -38,12 +38,14 @@ many distinct events it rests on and whether outlets from opposing camps reporte
 
 The design constraint that shapes everything else: **the evidence is press coverage, and
 press coverage is not a neutral sample of reality.** News-value research predicts that
-conflict is reported far more than cooperation, and the pipeline's output is consistent
-with that — 107 conflict edges against 32 alliance edges — though the pipeline cannot
-distinguish "the Assembly is mostly conflict" from "conflict is mostly what gets
-printed," because press coverage is the only thing it can see. So it is built to expose
-the skew rather than launder it: a relationship only one camp reported stays dashed at
-half weight, no matter how many articles back it.
+conflict is reported far more than cooperation, and the first weeks of output were
+consistent with that — 107 conflict edges against 32 alliance edges on 2026-09-11. The
+gap has since narrowed to 362 against 275, and the pipeline cannot tell you why: more
+articles now clear the analysis each night, and the pipeline's own scoring changed on
+2026-09-13. It also cannot distinguish "the Assembly is mostly conflict" from "conflict
+is mostly what gets printed," because press coverage is the only thing it can see. So it
+is built to expose the skew rather than launder it: a relationship only one camp reported
+stays dashed at half weight, no matter how many articles back it.
 
 ### What's on screen
 
@@ -137,9 +139,9 @@ The short version:
    summed over a 7-day window (YouTube then takes a channel-authority multiplier on top,
    so a large news channel's video can exceed 100 — see the caveats).
 
-A recent run (2026-09-10, the first to complete after the time-budget fix below): 1,283
-articles collected, 300 analysed, 246 stored, 87 pairs promoted to edges, 933 attention
-records across 207 members — 33 minutes end to end.
+A recent run (2026-09-18): 1,136 articles collected, 300 analysed across six runners,
+243 stored, 112 pairs promoted to edges, 1,156 attention records across 256 members —
+77 minutes end to end, of which the six analysers ran in parallel.
 
 ### News sources
 
@@ -177,7 +179,7 @@ Member profiles and portraits come from the National Assembly's public member da
 - **Volume from one camp is not corroboration.** Twenty articles from one side of the
   press is one editorial judgment, amplified. Confidence is capped until an outlet from a
   different camp reports the same polarity, and the cap is visible on screen as a dashed
-  line. As of 2026-09-11 that leaves 15 of 139 edges solid, which is the point: the
+  line. As of 2026-09-19 that leaves 72 of 637 edges solid, which is the point: the
   measure is only useful if it is allowed to return an uncomfortable number.
 - **A zero that arrives quietly is worse than a crash.** Naver rebuilt its search markup
   into `sds-comps-*` components. The old selectors matched nothing — but the container
@@ -335,8 +337,8 @@ event counts and confidence, then the supporting articles with links to the orig
 
 ```bash
 # Everything behind one relationship — aggregate, article list, event clusters.
-# This pair had 12 events across all three camps as of 2026-09-11.
-curl "https://korea-politician-api.onrender.com/api/relations/evidence?a=김민석&b=정청래"
+# This pair had 20 events from 21 articles across all three camps as of 2026-09-19.
+curl "https://korea-politician-api.onrender.com/api/relations/evidence?a=장동혁&b=정점식"
 
 # Raw evidence dump, paginated
 curl "https://korea-politician-api.onrender.com/api/relations/evidence?limit=200"
@@ -357,15 +359,15 @@ empty aggregate.
   precision and recall numbers exist, treat the relationship data as an illustration of a
   method, not as a finding. The sampling and scoring scripts are written
   (`coding_sample.py`); the coding is not done.
-- **Most edges have not cleared the bar the method is built around.** Of 139 relationship
-  edges on 2026-09-11: **15 are corroborated across camps**, 86 rest on a single camp, and
-  **38 carry no evidence log at all** — they predate the evidence table and are waiting on
+- **Most edges have not cleared the bar the method is built around.** Of 637 relationship
+  edges on 2026-09-19: **72 are corroborated across camps**, 535 rest on a single camp, and
+  **30 carry no evidence log at all** — they predate the evidence table and are waiting on
   `backfill_edge_observations.py`; two of those are hand-seeded importer examples with no
-  article behind them. Separately, **65 edges rest on exactly one event**, because
+  article behind them. Separately, **431 edges rest on exactly one event**, because
   `RELATION_MIN_CLUSTERS` is still 1 while the archive is young. The graph draws all of
   this as dashed lines, but the honest summary is that cross-camp verification is a
   working mechanism reporting a low number, not a filter most of the data has passed.
-- **The archive is 11 days old.** "Cumulative" means since 2026-08-30. Time decay,
+- **The archive is 21 days old.** "Cumulative" means since 2026-08-30. Time decay,
   event clustering and camp corroboration all need a longer run to mean much.
 - **These are *reported* relationships.** Cooperation and conflict the press didn't cover
   are not here.
